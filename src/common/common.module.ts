@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { Clock, SystemClock } from './clock';
-import { AppConfig, loadConfig } from './config';
+import { AppConfig, loadConfig } from '../config/config';
 import { Mutex } from './mutex';
 
 /** Process-wide singletons shared by every feature module. */

@@ -1,14 +1,14 @@
-import { AppConfig } from '../../src/common/config';
+import { AppConfig } from '../../src/config/config';
 import { Mutex } from '../../src/common/mutex';
-import { Advisor } from '../../src/scheduling/domain/advisor';
-import { VisaType } from '../../src/scheduling/domain/rules';
-import { InMemoryAdvisorRepository } from '../../src/scheduling/repositories/advisor.repository';
-import { InMemoryBookingRepository } from '../../src/scheduling/repositories/booking.repository';
-import { InMemoryWaitlistRepository } from '../../src/scheduling/repositories/waitlist.repository';
-import { AvailabilityService } from '../../src/scheduling/services/availability.service';
-import { BookingService } from '../../src/scheduling/services/booking.service';
-import { SettlementService } from '../../src/scheduling/services/settlement.service';
-import { WaitlistService } from '../../src/scheduling/services/waitlist.service';
+import { Advisor } from '../../src/advisors/advisor.model';
+import { VisaType } from '../../src/config/rules';
+import { InMemoryAdvisorRepository } from '../../src/advisors/advisor.repository';
+import { InMemoryBookingRepository } from '../../src/bookings/booking.repository';
+import { InMemoryWaitlistRepository } from '../../src/waitlist/waitlist.repository';
+import { AvailabilityService } from '../../src/availability/availability.service';
+import { BookingService } from '../../src/bookings/booking.service';
+import { SettlementService } from '../../src/waitlist/settlement.service';
+import { WaitlistService } from '../../src/waitlist/waitlist.service';
 import { FakeClock, MINUTE } from './fake-clock';
 
 export const t = (time: string): Date => new Date(`2025-03-10T${time}:00Z`);

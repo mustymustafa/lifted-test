@@ -1,6 +1,6 @@
 import { Clock } from '../../src/common/clock';
 
-export { MINUTE } from '../../src/scheduling/domain/rules';
+export { MINUTE } from '../../src/config/rules';
 
 /** A clock that only moves when the test tells it to. */
 export class FakeClock extends Clock {

@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { Clock } from '../../src/common/clock';
-import { AppConfig } from '../../src/common/config';
+import { AppConfig } from '../../src/config/config';
 import { FakeClock, MINUTE } from '../support/fake-clock';
 
 /**

@@ -123,6 +123,37 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 | Stretch: waitlist | Done. Join, automatic offer on expiry or cancellation, accept within 10 minutes |
 | Extra: cancel a booking | Done. Needed for the waitlist trigger |
 
+## Project layout
+
+One folder per feature. Each holds its model, storage, logic, API and DTOs,
+so following one feature means opening one folder.
+
+```
+src/
+  main.ts
+  app.module.ts          wires every provider (see note below)
+  config/
+    config.ts            environment variables, validated with zod
+    rules.ts             visa types, timings and limits: the one place to change them
+  common/                clock, mutex, errors, validation pipe, shared DTO helpers
+  advisors/              advisor model, repository, seed file schema
+  availability/          slot calculator (pure), service, resolver, DTOs
+  bookings/              model, repository, service, resolver, DTOs, hold sweeper
+  waitlist/              model, repository, service, settlement, resolver, DTOs
+test/
+  unit/                  mirrors src
+  e2e/                   full stack over HTTP
+  support/               fake clock, test harness
+```
+
+File suffixes carry the layer: `.model` (plain types and rules), `.repository`
+(storage interface and in-memory class), `.service` (business logic),
+`.resolver` (GraphQL), `.dto` (the GraphQL input class next to its zod schema).
+
+There is one Nest module rather than one per folder. Bookings and the waitlist
+depend on each other (a booking request settles the waitlist; the waitlist
+creates bookings), so separate modules would need circular imports.
+
 ## Tech choices
 
 - **NestJS.** Its dependency injection gives one shared instance of each
@@ -134,9 +165,10 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   stretch goals are filters and field selection, which GraphQL gives cheaply.
   The schema is generated from the TypeScript classes, so it cannot drift.
 - **zod for DTOs.** Every boundary is parsed by a zod schema: GraphQL inputs
-  ([schemas.ts](src/scheduling/graphql/schemas.ts)), the seed file
-  ([seed.schema.ts](src/scheduling/domain/seed.schema.ts)) and environment
-  variables ([config.ts](src/common/config.ts)). GraphQL checks types; zod
+  (the `*.dto.ts` file in each feature folder, e.g.
+  [booking.dto.ts](src/bookings/booking.dto.ts)), the seed file
+  ([seed.schema.ts](src/advisors/seed.schema.ts)) and environment
+  variables ([config.ts](src/config/config.ts)). GraphQL checks types; zod
   checks rules (non-blank name, `from` before `to`, windows that do not
   overlap). Inside the boundary the code trusts its data.
 - **In-memory store behind async repository interfaces.** The brief asks for
@@ -144,12 +176,12 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   database. The interfaces are async on purpose so a database can replace
   the in-memory classes without touching the services.
 - **One file for the business rules**
-  ([rules.ts](src/scheduling/domain/rules.ts)). Visa types, appointment
+  ([rules.ts](src/config/rules.ts)). Visa types, appointment
   lengths, breaks, the hold time and input limits are defined once there.
   The slot logic, config defaults and GraphQL schema descriptions all read
   from it, so changing a duration or adding a visa type is a one-file change.
 - **Slot calculation as a pure function**
-  ([slot-calculator.ts](src/scheduling/domain/slot-calculator.ts)). No clock,
+  ([slot-calculator.ts](src/availability/slot-calculator.ts)). No clock,
   no storage, just intervals in and slots out. It holds the trickiest logic,
   so it is the most heavily tested file.
 - **Injected clock.** Nothing calls `new Date()` directly. Tests move a fake
@@ -170,7 +202,7 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   a race here: a hold lapses, a new request arrives before the sweeper runs,
   and takes the slot ahead of someone already waiting. To close it, every
   write first "settles" inside the mutex
-  ([settlement.service.ts](src/scheduling/services/settlement.service.ts)):
+  ([settlement.service.ts](src/waitlist/settlement.service.ts)):
   release lapsed holds, offer the freed time to the waitlist, and only then do
   its own work. The sweeper runs the same step every 5 seconds so offers still
   go out when no requests are arriving.
@@ -272,7 +304,7 @@ random windows and bookings, assert no slot ever overlaps a blocked range).
 **Hold expiry and notifications**
 
 Today the sweeper is a `setInterval` inside the app process
-([hold-sweeper.ts](src/scheduling/services/hold-sweeper.ts)). That does not
+([hold-sweeper.ts](src/bookings/hold-sweeper.ts)). That does not
 survive production: it runs once per instance, it is lost on a deploy or
 crash, it scans every booking, and it is late by up to one interval.
 

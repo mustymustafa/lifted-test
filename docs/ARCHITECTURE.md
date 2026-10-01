@@ -9,14 +9,14 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
          |
          v
 +-------------------------------------------------------------+
-|  GraphQL layer (resolvers)            src/scheduling/graphql|
+|  GraphQL layer (resolvers)                    *.resolver.ts |
 |  availableSlots | requestBooking | confirmBooking | bookings|
 |  cancelBooking  | joinWaitlist   | acceptOffer    | waitlist|
 +-------------------------------------------------------------+
          |  input DTOs (zod schemas)        ^  output DTOs
          v                                  |
 +-------------------------------------------------------------+
-|  Services (business rules)           src/scheduling/services|
+|  Services (business rules)                     *.service.ts |
 |                                                             |
 |  AvailabilityService          BookingService                |
 |    - builds bookable slots      - request, confirm, cancel  |
@@ -26,12 +26,12 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
 |    - offer freed slots          - accept an offer           |
 |            \                      /                         |
 |             v                    v                          |
-|   domain: slot-calculator (pure function), booking rules    |
+|   slot-calculator (pure function), *.model.ts rules         |
 +-------------------------------------------------------------+
          |
          v
 +-------------------------------------------------------------+
-|  Repositories (async interfaces) src/scheduling/repositories|
+|  Repositories (async interfaces)            *.repository.ts |
 |  AdvisorRepository   BookingRepository   WaitlistRepository |
 +-------------------------------------------------------------+
          |
@@ -42,8 +42,11 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
 |  bookings, waitlist  <-- Maps, live for the process         |
 +-------------------------------------------------------------+
 
-Singletons shared by all layers (src/common):
+Singletons shared by all layers (src/common, src/config):
   Clock | AppConfig | Mutex        plus HoldSweeper (timer)
+
+Folders are per feature (advisors, availability, bookings, waitlist);
+the layer is the file suffix. See "Project layout" in the README.
 ```
 
 Production swap: only the bottom box changes (Postgres behind the same
