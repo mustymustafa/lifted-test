@@ -15,7 +15,8 @@
     "test:unit": "jest test/unit",
     "test:e2e": "jest test/e2e",
     "test:cov": "jest --coverage",
-    "prebuild": "rm -rf dist"
+    "prebuild": "rm -rf dist",
+    "start:test": "HOLD_MINUTES=0.25 SWEEP_INTERVAL_SECONDS=1 npm start"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

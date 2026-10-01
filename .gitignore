@@ -2,3 +2,8 @@ node_modules
 dist
 coverage
 .env
+
+# Postman workspace files. Only the exported collection is committed.
+.postman/
+postman/*
+!postman/ia-booking-api.postman_collection.json
