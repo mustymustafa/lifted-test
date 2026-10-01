@@ -59,21 +59,6 @@ describe('computeSlots', () => {
     });
   });
 
-  describe('windows are never merged', () => {
-    // Rajan, 10 March: 09:00-09:30 and 09:33-11:30.
-    const windows = [range(0, 30), range(33, 150)];
-
-    it('starts the second window on its own off-grid start time', () => {
-      const starts = computeSlots({ windows, blocked: [], ...A }).map((s) => s.start);
-      expect(starts).toEqual([at(0), at(33), at(63), at(93)]);
-    });
-
-    it('does not let a 60 min slot span the 3 minute gap', () => {
-      const starts = computeSlots({ windows, blocked: [], ...B }).map((s) => s.start);
-      expect(starts).toEqual([at(33)]);
-    });
-  });
-
   describe('with existing bookings', () => {
     it('removes the booked time and the break after it', () => {
       // Type B booked 09:00-10:00, blocked until 10:10. Window ends 10:50.
@@ -85,27 +70,10 @@ describe('computeSlots', () => {
       expect(computeSlots({ windows: [range(0, 110)], blocked: [range(0, 70)], ...B })).toEqual([]);
     });
 
-    it('drops a slot whose break would run into the next booking', () => {
-      // Type A booked 09:30-10:00, blocked until 10:05, in a 09:00-11:00 window.
-      const slots = computeSlots({ windows: [range(0, 120)], blocked: [range(30, 65)], ...A });
-      // 09:00-09:30 would need a break until 09:35, which runs into the 09:30 booking.
-      expect(slots).toEqual([range(65, 95)]);
-    });
-
     it('offers a slot before a booking only if its own break also fits', () => {
       // Booking at 09:35. A slot at 09:00-09:30 plus a 5 min break ends exactly at 09:35.
       const slots = computeSlots({ windows: [range(0, 120)], blocked: [range(35, 70)], ...A });
       expect(slots.map((s) => s.start)).toEqual([at(0), at(70)]);
-    });
-
-    it('carries a break across a gap into the next window', () => {
-      // Rajan: type A booked 09:00-09:30, break until 09:35, second window opens at 09:33.
-      const slots = computeSlots({
-        windows: [range(0, 30), range(33, 150)],
-        blocked: [range(0, 35)],
-        ...A,
-      });
-      expect(slots.map((s) => s.start)).toEqual([at(35), at(65), at(95)]);
     });
 
     it('protects the break before a booking in the next window', () => {

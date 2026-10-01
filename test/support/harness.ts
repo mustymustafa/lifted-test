@@ -41,3 +41,16 @@ export function setup(advisors: Advisor[] = [SOFIA, RAJAN]) {
     (await availability.findSlots({ advisorId, visaType })).map((s) => s.start.toISOString().slice(11, 16));
   return { clock, bookingRepo, waitlistRepo, availability, service, waitlist, slotStarts };
 }
+
+/**
+ * Sofia alone has one 110 minute window (09:00-10:50). A type B booking at
+ * 09:00 leaves room for exactly one type A call (10:10) and no type B call.
+ */
+export async function sofiaFullForTypeB() {
+  const ctx = setup([SOFIA]);
+  const blocker = await ctx.service.request({ candidateName: 'Blocker', visaType: VisaType.B });
+  return { ...ctx, blocker };
+}
+
+export const entryStatus = async (ctx: ReturnType<typeof setup>, id: string) =>
+  (await ctx.waitlistRepo.findById(id))?.status;
