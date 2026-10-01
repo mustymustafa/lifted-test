@@ -25,6 +25,14 @@
   automatically.
 - A request without a name, or with an unknown visa type, is refused.
 - If no slot is available, the candidate is told so.
+- A candidate can only have one active request at a time. A request is
+  active while it is a booking that is on hold, offered or confirmed, or a
+  place on the waitlist.
+- A second request from the same candidate is refused, and they are told
+  which request is in the way.
+- A candidate can request again once their earlier request is cancelled, or
+  is rejected because the advisor did not confirm in time.
+- A candidate can cancel their booking.
 
 ## Confirming a booking
 
@@ -57,6 +65,9 @@
 - If the candidate does not accept in time, the slot is offered to the next
   person on the waitlist.
 - Once the candidate accepts, the advisor confirms the booking as usual.
+- A candidate cannot join the waitlist twice, or while they have a booking.
+- A candidate can leave the waitlist, or decline an offer. A declined slot is
+  offered to the next person on the waitlist.
 
 ## Advisor breaks (stretch)
 
@@ -77,171 +88,244 @@
 - Bookings are kept in memory. Restart the server to start clean.
 - Run the scenarios in order. Later ones reuse bookings from earlier ones.
 - Advisors: Sofia Andersson is `ia-001`, Rajan Patel is `ia-002`.
-- All dates are in March 2025, times in UTC.
+- Visa types: `A` is Skilled Worker (30 minutes), `B` is Family / Dependent
+  (60 minutes).
+- All dates are in March 2025 (10 to 21 March), times in UTC.
+- The same steps are in a Postman collection:
+  [postman/ia-booking-api.postman_collection.json](../postman/ia-booking-api.postman_collection.json).
+- Give each booking a different candidate name. A candidate can only have one
+  active request, so reusing a name is refused.
 
-Scenarios 1 to 8 use a normal server:
+The scenarios do not fix the candidate, visa type, advisor or slot. Choose
+your own; each step says what the result should be for whatever you chose.
+
+The hold is 10 minutes by default. Nobody wants to wait that long to test
+that a booking is released, so start the server in test mode:
 
 ```bash
-npm start
+npm run start:test
 ```
 
-Scenarios 9 and 10 test expiry. Restart the server with 15 second holds so
-you do not have to wait 10 minutes:
+Test mode is the same app with a 15 second hold. The rules are otherwise the
+same. A hold or a waitlist offer now lasts 15 seconds, so:
 
-```bash
-HOLD_MINUTES=0.25 SWEEP_INTERVAL_SECONDS=1 npm start
-```
+- When a step follows a booking request, do it within 15 seconds.
+- Where a step says "wait", give it about 17 seconds.
 
 ## Scenario 1: A candidate views available slots
 
-1. Ask for available slots for visa type A.
-   - 44 slots come back. The first is with Sofia on 10 March, 09:00 to 09:30.
-2. Ask for available slots for visa type B.
-   - 17 slots come back, each 60 minutes long.
-3. Ask for Rajan's type A slots on 10 March.
-   - They start at 09:00, 09:33, 10:03 and 10:33. His two windows that
-     morning are kept separate.
-4. Ask for Sofia's slots on 11 March.
-   - None. Her window that day is only 20 minutes.
+This scenario is for exploring. Change the filter values to whatever you
+like; the result should always match what you asked for. The counts below are
+for a freshly started server.
+
+1. Ask for all available slots, with no filter.
+   - Slots come back for both visa types, earliest first. There are 61.
+2. Filter by visa type: `A` or `B`.
+   - Only slots for that visa type come back: 44 for A, 17 for B.
+   - Type A slots are 30 minutes long, type B slots are 60.
+3. Filter by advisor: `ia-001` or `ia-002`.
+   - Only that advisor's slots come back.
+   - Worth a look: Rajan on 10 March has slots at 09:00 and then 09:33. His
+     two windows that morning are kept separate.
+4. Filter by date: a day, or a longer period.
+   - Only slots that start and end inside that period come back.
+5. Combine filters: visa type, advisor and date together.
+   - Only slots matching all of them come back.
+   - Worth a look: type A with Sofia on 11 March returns nothing. Her window
+     that day is only 20 minutes.
 
 ## Scenario 2: A candidate books and the advisor confirms
 
-1. Request a booking for "Amina Yusuf", visa type B.
-   - The booking is on hold with Sofia, 10 March, 09:00 to 10:00.
-   - The hold ends 10 minutes after it was made.
-2. Ask for Sofia's slots on 10 March.
-   - The 09:00 slot is gone. The only slot left is type A at 10:10.
-3. Confirm the booking as Sofia.
+1. Request a booking with a candidate name and a visa type of your choice.
+   - The booking is on hold, with the earliest free slot and an assigned
+     advisor.
+   - The appointment is 30 minutes for type A, 60 for type B.
+   - The hold lasts 15 seconds (10 minutes on a normal server).
+2. Ask for that advisor's slots on the day of the booking.
+   - Nothing is offered during the appointment or the break after it.
+3. Confirm the booking as the assigned advisor.
    - The booking is confirmed.
 4. Look up the booking.
    - It shows as confirmed.
-5. Ask for Sofia's slots on 10 March again.
-   - The 09:00 slot is still gone.
+5. Ask for that advisor's slots on that day again.
+   - The time is still not offered.
 
 ## Scenario 3: Two candidates want the same slot
 
-1. Request a type A booking for "First Candidate" with Rajan on 11 March at
-   14:00.
-   - The booking is on hold, 14:00 to 14:30.
-2. Request the same slot for "Second Candidate".
+1. Request a booking for one particular free slot (advisor and start time).
+   - The booking is on hold, with that advisor at that time.
+2. Request the same slot for a different candidate.
    - Refused: the slot is not available.
-3. Send ten requests at the same moment for Rajan on 12 March at 09:00.
-   - Exactly one gets the slot. The other nine are refused.
+3. Send several requests for another free slot at the same moment, each for a
+   different candidate. Ten is a good number.
+   - Exactly one gets the slot. All the others are refused.
 
 ## Scenario 4: Requests that should be refused
 
 1. Request a booking with a blank name.
    - Refused: the name is required.
-2. Request a booking with visa type C.
+2. Request a booking with a visa type other than A or B.
    - Refused: not a valid visa type.
-3. Request a booking with Sofia on 12 March at 10:10, which is not one of
-   her slot times.
+3. Request a booking at a time inside an advisor's hours that is not one of
+   the start times on offer, for example seven minutes after a real slot.
    - Refused: the slot is not available.
-4. Confirm First Candidate's booking (from scenario 3) as Sofia. It is
-   assigned to Rajan.
+4. Confirm the first booking from scenario 3 as the other advisor, not the
+   one it was assigned to.
    - Refused: only the assigned advisor can confirm.
 5. Confirm a booking that does not exist.
    - Refused: booking not found.
-6. Confirm Amina's booking (from scenario 2) a second time.
+6. Confirm the booking from scenario 2 a second time.
    - Refused: it is already confirmed.
 
 ## Scenario 5: The advisor gets a break between appointments
 
-1. Request a type A booking with Rajan on 13 March at 09:00.
-   - The booking is on hold, 09:00 to 09:30.
-2. Ask for Rajan's type A slots on 13 March.
-   - The next slot starts at 09:35, not 09:30.
-3. Ask for Sofia's type A slots on 13 March.
-   - 09:00 and 09:30 are both there. Rajan's booking does not affect her.
-
-The 10 minute break after a type B appointment is shown in scenario 2,
-step 2: Amina's appointment ends at 10:00 and the next slot is 10:10.
+1. Request a booking with a visa type of your choice.
+   - The booking is on hold.
+2. Ask for that advisor's slots that day, for the same visa type.
+   - Nothing starts during the appointment or the break after it: 5 minutes
+     after a type A appointment, 10 after a type B.
+   - The next slot starts no earlier than the end of the break.
+3. Ask for the other advisor's slots.
+   - Every slot they offered before the booking is still offered.
 
 ## Scenario 6: Viewing bookings
 
+Change the filter values to whatever you like; the result should match.
+
 1. List all bookings.
-   - Four bookings, in order of start time, each with a status and an advisor.
-2. List only confirmed bookings.
-   - Just Amina Yusuf's.
-3. List only Rajan's bookings.
-   - Three bookings.
-4. List bookings two at a time.
-   - The first page has two bookings and says there are more.
-   - The second page has the other two and says there are no more.
+   - Every booking comes back, in order of start time, each with a status and
+     an advisor. Expired and cancelled bookings are included.
+2. Filter by status: offered, held, confirmed, expired or cancelled.
+   - Only bookings with that status come back.
+3. Filter by advisor.
+   - Only that advisor's bookings come back.
+4. Combine filters: status, advisor, visa type and dates.
+   - Only bookings matching all of them come back.
+5. Ask for a page of bookings, two at a time.
+   - Two bookings come back, with the total count, and it says whether there
+     are more.
+6. Ask for the next page.
+   - The next bookings come back, none repeated from the page before.
 
 ## Scenario 7: A confirmed booking is cancelled
 
-1. Cancel Amina's booking.
+1. Cancel the booking from scenario 2.
    - The booking is cancelled.
-2. Ask for Sofia's type B slots on 10 March.
-   - 09:00 can be booked again.
+2. Ask for that advisor's slots that day, for the same visa type.
+   - The time can be booked again.
 3. Cancel the same booking again.
    - Refused: it is already cancelled.
 
 ## Scenario 8: A waitlisted candidate gets a cancelled slot
 
-1. Try to join the waitlist for type B with Sofia.
+Choose one visa type and one advisor for this scenario.
+
+1. Try to join the waitlist for that visa type and advisor.
    - Refused: slots are still available, so book one instead.
-2. Request type B bookings with Sofia until none are left.
-   - Eight bookings are made, then the next is refused. The first of the
-     eight is 10 March at 09:00.
-3. Join the waitlist as "Wanda Okafor" for type B with Sofia.
-   - Wanda is on the waitlist, waiting.
-4. Cancel the 10 March 09:00 booking.
+2. Request bookings for that visa type and advisor until none are left.
+   Confirm each one.
+   - Every booking is made and confirmed, then the next is refused.
+3. Join the waitlist as a new candidate.
+   - They are on the waitlist, waiting.
+4. Cancel the first of the bookings from step 2.
    - The booking is cancelled.
-5. Look up Wanda's waitlist entry.
-   - She has been offered the 10 March 09:00 slot with Sofia.
-6. Request a type B booking with Sofia as "Walk In".
-   - Refused: nothing is available. The slot is reserved for Wanda.
-7. Confirm Wanda's offer as Sofia, before Wanda has accepted.
+5. Look up the candidate's waitlist entry.
+   - They have been offered the slot that was just freed. They have 15
+     seconds to accept, so do steps 6 to 8 promptly.
+6. Request a booking for the same visa type and advisor as another candidate.
+   - Refused: nothing is available. The slot is reserved.
+7. Confirm the offered booking as the advisor, before the candidate accepts.
    - Refused: the candidate has not accepted yet.
-8. Accept the offer as Wanda.
+8. Accept the offer as the candidate.
    - The booking is now on hold for the advisor to confirm.
-9. Confirm the booking as Sofia.
+9. Confirm the booking as the advisor.
    - The booking is confirmed.
 10. View the waitlist.
-    - Wanda's entry shows as accepted.
+    - The candidate's entry shows as accepted.
 
 ## Scenario 9: The advisor does not confirm in time
 
-Restart the server with 15 second holds first.
-
-1. Request a type A booking with Sofia on 10 March at 09:00.
-   - The booking is on hold. The hold ends 15 seconds after it was made.
-2. Ask for Sofia's type A slots on 10 March straight away.
-   - 09:00 is not offered.
+1. Request a booking.
+   - The booking is on hold.
+2. Ask for that advisor's slots that day straight away.
+   - The booked time is not offered.
 3. Wait about 17 seconds, then look up the booking.
    - It shows as expired. Nobody had to do anything.
-4. Ask for Sofia's type A slots on 10 March.
-   - 09:00 is offered again.
-5. Confirm the booking as Sofia.
+4. Ask for that advisor's slots that day.
+   - The time is offered again.
+5. Confirm the booking as the assigned advisor.
    - Refused: the hold has expired.
-6. Request the same slot for "Next Candidate".
+6. Request the released time for a different candidate.
    - The booking is on hold. Someone else can take the released slot.
+7. Confirm that booking as the advisor.
+   - The booking is confirmed.
 
 ## Scenario 10: A waitlisted candidate misses their offer
 
-Steps 1 to 3 need to be done within 15 seconds.
+Choose one visa type and one advisor. Steps 1 to 3 need to be done within 15
+seconds.
 
-1. Request type B bookings with Rajan until none are left. Confirm every one
-   as Rajan except the first.
-   - Nine bookings are made. One is still on hold, eight are confirmed.
-2. Join the waitlist as "First In Queue" for type B with Rajan.
+1. Request bookings for that visa type and advisor until none are left.
+   Confirm every one except the first.
+   - One booking is still on hold; the rest are confirmed.
+2. Join the waitlist as one candidate.
    - Waiting.
-3. Join the waitlist as "Second In Queue" for type B with Rajan.
+3. Join the waitlist as a second candidate.
    - Waiting.
-4. Wait about 17 seconds, then look up First In Queue.
+4. Wait about 17 seconds, then look up the first candidate.
    - The unconfirmed hold has expired and its slot has been offered to them.
-5. Look up Second In Queue straight away.
+5. Look up the second candidate straight away.
    - Still waiting.
-6. Wait about 17 seconds, then look up Second In Queue.
-   - First In Queue did not answer, so the slot has been offered to them
-     instead.
-7. Accept the offer as First In Queue.
+6. Wait about 17 seconds, then look up the second candidate.
+   - The first candidate did not answer, so the slot has been offered to the
+     second instead.
+7. Accept the offer as the first candidate.
    - Refused: the offer has expired.
-8. Accept the offer as Second In Queue.
+8. Accept the offer as the second candidate.
    - The booking is on hold for the advisor to confirm.
-9. Confirm the booking as Rajan.
+9. Confirm the booking as the advisor.
    - The booking is confirmed.
 10. View the waitlist.
-    - First In Queue shows as expired. Second In Queue shows as accepted.
+    - The first candidate shows as expired, the second as accepted.
+
+## Scenario 11: A candidate tries to request more than once
+
+This is an edge case found during manual testing. Sending the same request
+repeatedly used to put a new slot on hold each time.
+
+1. Request a booking for a candidate of your choice.
+   - The booking is on hold.
+2. Send exactly the same request again, as many times as you like.
+   - Refused every time: the candidate already has an active request. The
+     error names the booking that is in the way.
+3. Request again with the same name in different case and spacing, for
+   example " DANA   REYES ".
+   - Refused: it is the same candidate.
+4. Try to join the waitlist as the same candidate.
+   - Refused: they already have an active request.
+5. Cancel the candidate's booking.
+   - The booking is cancelled.
+6. Request a booking for the same candidate again.
+   - The booking is on hold. A cancelled request no longer counts.
+7. Wait about 17 seconds without confirming, then look up the booking.
+   - It shows as expired.
+8. Request a booking for the same candidate again.
+   - The booking is on hold. An expired request no longer counts.
+9. Confirm the booking as the assigned advisor.
+   - The booking is confirmed.
+10. Request a booking for the same candidate once more.
+    - Refused: a confirmed booking still counts.
+
+## Scenario 12: A candidate leaves the waitlist
+
+Uses the visa type and advisor from scenario 8, which have no free slots.
+
+1. Join the waitlist as a new candidate.
+   - Waiting.
+2. Leave the waitlist as that candidate.
+   - Their entry is cancelled.
+3. Leave the waitlist again.
+   - Refused: they have already left.
+4. Request a booking for the same candidate, for a visa type that still has
+   slots.
+   - The booking is on hold. Leaving the waitlist freed them to request.

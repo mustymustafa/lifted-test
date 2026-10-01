@@ -35,12 +35,40 @@ and validated when the app boots. Restarting the app resets all bookings.
 npm test
 ```
 
+The tests are organised around the acceptance criteria. See "How the tests
+are organised" below.
+
+**Manual test scenarios:** the acceptance criteria and twelve step-by-step
+scenarios, for Postman or curl, are in
+[docs/ACCEPTANCE_CRITERIA_AND_TEST_SCENARIOS.md](docs/ACCEPTANCE_CRITERIA_AND_TEST_SCENARIOS.md).
+
+There is a matching Postman collection:
+[postman/ia-booking-api.postman_collection.json](postman/ia-booking-api.postman_collection.json).
+Import it into Postman, start the server with `npm run start:test` (see below),
+and run it top to bottom, once. Each request's Body tab says what you can
+change, and the checks follow what you type. Restart the server before running
+it again.
+
+**Testing without waiting 10 minutes:** the hold is 10 minutes, as the brief
+asks. Nobody wants to wait that long to check that an unconfirmed booking is
+released, so the hold length is a setting. For a test run, start the server
+in test mode:
+
+```bash
+npm run start:test
+```
+
+That is `npm start` with two settings: a 15 second hold (`HOLD_MINUTES=0.25`,
+a quarter of a minute) and a sweep every second. All the scenarios run on
+that one server. Only the lengths change; the hold and expiry logic is the
+same code either way.
+
 **Environment variables** (all optional, see [.env.example](.env.example)):
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
-| `HOLD_MINUTES` | `10` | How long a hold lasts. Set to `1` to watch expiry by hand |
+| `HOLD_MINUTES` | `10` | How long a hold or waitlist offer lasts. Use `0.25` (15 seconds) for a test run, see above |
 | `SWEEP_INTERVAL_SECONDS` | `5` | How often lapsed holds are released and offered to the waitlist. `0` turns the timer off |
 | `SEED_PATH` | `data/seed.json` | Advisor availability file |
 
@@ -105,6 +133,12 @@ advisor confirms it with `confirmBooking` as usual:
 curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"mutation { acceptOffer(input: {waitlistEntryId: \"PASTE_ENTRY_ID\"}) { id status expiresAt } }"}'
 ```
 
+Leave the waitlist, or decline an offer (the slot goes to the next candidate):
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"mutation { leaveWaitlist(input: {waitlistEntryId: \"PASTE_ENTRY_ID\"}) { id status } }"}'
+```
+
 See the whole queue:
 
 ```bash
@@ -114,7 +148,7 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":
 Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 `ADVISOR_NOT_FOUND`, `BOOKING_NOT_FOUND`, `FORBIDDEN`, `NO_SLOT_AVAILABLE`,
 `SLOT_UNAVAILABLE`, `INVALID_STATE`, `HOLD_EXPIRED`, `SLOTS_AVAILABLE`,
-`WAITLIST_ENTRY_NOT_FOUND`, `OFFER_EXPIRED`.
+`WAITLIST_ENTRY_NOT_FOUND`, `OFFER_EXPIRED`, `ACTIVE_REQUEST_EXISTS`.
 
 ## What is built
 
@@ -126,7 +160,9 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 | 4. Bookings | Done. Stretch: filters, cursor pagination, fetch one by id |
 | Stretch: advisor breaks | Done. 5 min after type A, 10 min after type B |
 | Stretch: waitlist | Done. Join, automatic offer on expiry or cancellation, accept within 10 minutes |
-| Extra: cancel a booking | Done. Needed for the waitlist trigger |
+| Extra: cancel a booking | Done. Needed for two reasons: it is one of the waitlist's triggers, and it is how a candidate frees themselves to make a new request |
+| Extra: leave the waitlist or decline an offer | Done. The same "cancel" for a waitlist place |
+| Extra: one active request per candidate | Done. See "An edge case I found while testing" |
 
 ## Project layout
 
@@ -147,8 +183,9 @@ src/
   bookings/              model, repository, service, resolver, DTOs, hold sweeper
   waitlist/              model, repository, service, settlement, resolver, DTOs
 test/
-  unit/                  mirrors src
-  e2e/                   full stack over HTTP
+  acceptance/            one file per area of the acceptance criteria, named after them
+  unit/                  edge cases for the slot arithmetic, seed file, config and lock
+  e2e/                   the API over HTTP: schema, validation, error codes
   support/               fake clock, test harness
 ```
 
@@ -192,7 +229,7 @@ creates bookings), so separate modules would need circular imports.
   so it is the most heavily tested file.
 - **Injected clock.** Nothing calls `new Date()` directly. Tests move a fake
   clock forward to check expiry at 9:59.999 and 10:00.000 without waiting.
-- **Jest + supertest.** 133 tests, about 98% line coverage.
+- **Jest + supertest.** About 160 tests, about 99% line coverage. See "How the tests are organised".
 
 ### Decisions worth knowing about
 
@@ -201,6 +238,8 @@ creates bookings), so separate modules would need circular imports.
   interleave between the check and the save, so both steps run inside a small
   in-process [mutex](src/common/mutex.ts). Tests fire 20 to 25 parallel
   requests at one slot and assert exactly one wins.
+- **A candidate can have one active request at a time.** See "An edge case
+  I found while testing" below.
 - **Hold expiry does not depend on a timer.** Whether a hold still blocks a
   slot is decided from its `expiresAt` and the clock on every read. If the
   background sweeper is late or off, availability is still correct.
@@ -251,6 +290,114 @@ creates bookings), so separate modules would need circular imports.
 - **Past slots are not hidden.** The seed data is from March 2025. Filtering
   out slots before "now" would return nothing, so I left that out.
 
+## How the tests are organised
+
+The tests are grouped by the acceptance criteria in
+[docs/ACCEPTANCE_CRITERIA_AND_TEST_SCENARIOS.md](docs/ACCEPTANCE_CRITERIA_AND_TEST_SCENARIOS.md),
+so you can read a criterion and find the tests that prove it.
+
+- **`test/acceptance/`** has one file per area: availability, requesting a
+  booking, confirming, viewing bookings, advisor breaks and the waitlist. Each
+  `describe` is a criterion, in its own words, for example "While a slot is on
+  hold, no other candidate can request or book it". The tests run the real
+  services with a fake clock, so a hold expiring after ten minutes takes
+  milliseconds. This is where the business rules are tested, including the
+  boundaries (one millisecond before a hold expires, exactly at ten minutes)
+  and requests arriving at the same moment.
+- **`test/unit/`** covers what does not belong to one criterion: the slot
+  arithmetic's edge cases, the seed file's validation, config, the lock and the
+  constants.
+- **`test/e2e/`** sends real requests to the running API. It does not repeat
+  the business rules. It checks what only a real request can show: the GraphQL
+  schema, input validation, error codes as a client sees them, nested fields,
+  and parallel requests.
+- **One criterion has a placeholder, not a test.** "The advisor receives the
+  request to confirm" is only half built (see "Taking it to production"), so it
+  is an `it.todo` that shows up in the test output.
+
+**Do the tests catch bugs?** Coverage only shows that code ran. To check the
+tests would notice a mistake, I broke the code on purpose in ten ways, one at
+a time, and checked that tests failed each time: removing the advisor break,
+letting any advisor confirm, switching off the one-request rule, expiring a hold
+one tick late, serving the waitlist newest first, removing the lock, ignoring
+the visa type or the advisor on a waitlist offer, never passing on a missed
+offer, and letting confirmed slots reappear. Nine were caught straight away.
+The tenth (a waitlist candidate who asked for one advisor being offered another)
+was not, so I added a test for it. The check was done by hand, not wired into
+the build.
+
+## An edge case I found while testing
+
+**What I found.** Testing by hand in Postman, I sent the same booking request
+several times in a row. I expected the second one to be refused. Instead every
+one succeeded, and each put a *different* slot on hold.
+
+**Why it happened.** A booking request is only a name and a visa type, and
+the API assigns the earliest free slot. Nothing connected one request to the
+next, so the same candidate could keep asking and be handed slot after slot.
+Left alone, one candidate could put the whole calendar on hold and lock
+everyone else out, ten minutes at a time. None of the automated tests caught
+it, because every test used a different candidate name for each request.
+
+**The rule I added.** A candidate can have one active request at a time
+([candidate-request.policy.ts](src/bookings/candidate-request.policy.ts)).
+
+- A request is active while it is a booking that is offered, on hold or
+  confirmed, or a place on the waitlist.
+- A second `requestBooking` or `joinWaitlist` is refused with
+  `ACTIVE_REQUEST_EXISTS`. The error says which request is in the way.
+- The candidate can request again once the first one is **cancelled** or
+  **rejected**. Rejected means the advisor did not confirm in time, so the
+  hold expired; there is no separate reject action.
+- The check runs inside the same lock as the booking itself, so sending the
+  same request many times at once still gives exactly one booking.
+- The limit is the constant `MAX_ACTIVE_REQUESTS_PER_CANDIDATE` in
+  [rules.ts](src/config/rules.ts).
+
+**Why this needs a cancel mutation.** If a candidate may only have one
+request, they must be able to withdraw it, or one wrong booking would lock
+them out for good. So the rule is a second reason for `cancelBooking` (the
+first is that the brief names a cancelled booking as a waitlist trigger), and
+the reason I added `leaveWaitlist`: a place on the waitlist counts as a
+request too, and there was no way to give one up.
+
+```
+  requestBooking / joinWaitlist
+        |
+        v
+  does this candidate already have an active request?
+        |
+   no   |   yes ---------------------> refused: ACTIVE_REQUEST_EXISTS
+   |
+   v
+  request goes ahead  -->  active:  booking OFFERED / HELD / CONFIRMED
+                                    or waitlist place WAITING
+                                         |
+            +----------------------------+----------------------------+
+            |                            |                            |
+     cancelBooking /             advisor does not                missed offer
+     leaveWaitlist               confirm in time                 (10 minutes)
+            |                            |                            |
+            v                            v                            v
+        CANCELLED                     EXPIRED                      EXPIRED
+            |                            |                            |
+            +----------------------------+----------------------------+
+                                         |
+                                         v
+                         the candidate can request again
+```
+
+**How "the same candidate" is recognised.** By name, ignoring case and extra
+spaces: "Amina Yusuf" and " amina  YUSUF " are the same person. The name is
+the only identity the brief gives a candidate, and it is weak in both
+directions. Two different people with the same name block each other. And
+someone who wants to get round the rule only has to change the name they
+type. So this closes the accidental case I hit, not a determined one.
+
+**In production.** The rule would key on a logged-in candidate id rather
+than a name, and be enforced by the database, with rate limiting at the
+gateway for scripted abuse. See "Taking it to production".
+
 ## Challenges and trade-offs
 
 - **Getting the break rule right** was the hardest part. Blocking time after
@@ -274,17 +421,20 @@ creates bookings), so separate modules would need circular imports.
 - **Waitlisted candidates are not notified.** They find their offer by
   polling `waitlistEntry`. Offers can be up to one sweep (5 seconds) late when
   the API is idle.
-- **No way to decline an offer or leave the waitlist.** An unwanted offer
-  blocks the slot until it lapses.
-- **Nothing stops the same person joining the waitlist twice.** There is no
-  candidate identity, only a name.
+- **A candidate is recognised by name only.** The one-active-request rule
+  matches on the name typed in. Two different people with the same name block
+  each other, and someone can get round the rule by changing the name. There
+  is no login to do better with.
+- **A confirmed booking counts as active for ever.** Nothing marks an
+  appointment as finished once its date has passed, so a candidate with a
+  confirmed booking must cancel it before requesting another.
 - **Cursor pagination is basic.** The cursor is a booking id and the list is
   filtered and sorted in memory on every call.
 - **`advisor` on a booking is resolved one at a time.** Free in memory, an
   N+1 query against a database.
 
-With more time, in order: decline-offer and leave-waitlist mutations, a
-per-advisor lock, and property-based tests for the slot calculator (generate
+With more time, in order: a per-advisor lock, treating past appointments as
+finished, and property-based tests for the slot calculator (generate
 random windows and bookings, assert no slot ever overlaps a blocked range).
 
 ## Taking it to production
@@ -386,8 +536,14 @@ start there and add the queue when the lateness matters.
 
 - Authentication, with the advisor identity taken from the token rather than
   an argument. Candidates should only see their own bookings.
-- Query depth and cost limits, rate limiting, and introspection and the
-  playground turned off.
+- With candidate identity from login, key the one-active-request rule on the
+  candidate id instead of the name, and enforce it in the database with a
+  unique partial index on `candidate_id` for active bookings, so it holds
+  across instances.
+- Rate limiting at the gateway, for the script that changes the name on every
+  request.
+- Query depth and cost limits, and introspection and the playground turned
+  off.
 - DataLoader for `Booking.advisor`.
 - Hide past slots and require a bounded date range on `availableSlots`.
 
@@ -420,10 +576,21 @@ I used Claude Code (Claude Opus) throughout.
   the advisor-scoped settle step and the "every write settles first" rule.
 - **What I delegated.** Scaffolding, the implementation, the test suite and a
   first draft of this README.
+- **What the AI missed and I caught.** Its tests all passed, but none of them
+  sent the same request twice as the same candidate. Testing by hand in
+  Postman, I did, and found that one candidate could hold slot after slot. I
+  then specified the fix: one active request per candidate, released only by
+  a cancellation or an expiry. See "An edge case I found while testing".
 - **How the output was checked.**
   - The expected slot counts in the end-to-end tests (44 type A, 17 type B)
     were counted by hand from the seed data before running the code.
   - The break-rule test cases were worked out on paper per case, including
     the Rajan 09:30 / 09:33 gap.
+  - I checked the tests were worth having by breaking the code on purpose and
+    seeing whether they failed. One bug got through, which is how I found a
+    missing test. See "How the tests are organised".
   - Typecheck and the full test suite run clean, and each endpoint was
     exercised with curl against the running server.
+  - I wrote acceptance criteria from the brief and ran step-by-step
+    scenarios against the running API in Postman, which is how the edge case
+    above was found.
