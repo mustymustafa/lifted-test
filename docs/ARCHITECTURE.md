@@ -11,6 +11,7 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
 +-------------------------------------------------------------+
 |  GraphQL layer (resolvers)            src/scheduling/graphql|
 |  availableSlots | requestBooking | confirmBooking | bookings|
+|  cancelBooking  | joinWaitlist   | acceptOffer    | waitlist|
 +-------------------------------------------------------------+
          |  input DTOs (zod schemas)        ^  output DTOs
          v                                  |
@@ -18,9 +19,11 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
 |  Services (business rules)           src/scheduling/services|
 |                                                             |
 |  AvailabilityService          BookingService                |
-|    - builds bookable slots      - request (creates a hold)  |
-|                                 - confirm                   |
-|                                 - expire stale holds        |
+|    - builds bookable slots      - request, confirm, cancel  |
+|                                                             |
+|  SettlementService            WaitlistService               |
+|    - release lapsed holds       - join the queue            |
+|    - offer freed slots          - accept an offer           |
 |            \                      /                         |
 |             v                    v                          |
 |   domain: slot-calculator (pure function), booking rules    |
@@ -29,14 +32,14 @@ Immigration Advisor Booking API: GraphQL, in-memory store, single process.
          v
 +-------------------------------------------------------------+
 |  Repositories (async interfaces) src/scheduling/repositories|
-|  AdvisorRepository            BookingRepository             |
+|  AdvisorRepository   BookingRepository   WaitlistRepository |
 +-------------------------------------------------------------+
          |
          v
 +-------------------------------------------------------------+
 |  In-memory implementations (singletons)                     |
 |  advisors + windows  <-- data/seed.json, validated at boot  |
-|  bookings            <-- Map, lives for the process         |
+|  bookings, waitlist  <-- Maps, live for the process         |
 +-------------------------------------------------------------+
 
 Singletons shared by all layers (src/common):
@@ -49,24 +52,30 @@ interfaces). Nothing above the repository line knows where data lives.
 ## 2. Booking lifecycle
 
 ```
-                  requestBooking
-                        |
-                        v
-                   +--------+
-                   |  HELD  |   expiresAt = now + 10 min
-                   +--------+
-                    /      \
-   confirmBooking  /        \  10 min pass, no confirm
-   (in time)      /          \
-                 v            v
-         +-----------+    +---------+
-         | CONFIRMED |    | EXPIRED |
-         +-----------+    +---------+
-          slot removed     slot back in the pool
-          permanently
+  requestBooking                    settle (slot freed,
+  (slot available)                  someone is waiting)
+        |                                  |
+        |                                  v
+        |                            +---------+  10 min, no answer
+        |                            | OFFERED |-------------------+
+        |                            +---------+                   |
+        |                 acceptOffer (candidate)                  |
+        |                 fresh 10 min hold                        |
+        v                                  |                       |
+   +--------+ <----------------------------+                       |
+   |  HELD  |------- 10 min, advisor does not confirm -------+     |
+   +--------+                                                |     |
+     |    \                                                  v     v
+     |     \   cancelBooking                             +---------+
+     |      +----------------------+                     | EXPIRED |
+     | confirmBooking (advisor)    |                     +---------+
+     v                             v
+ +-----------+  cancelBooking  +-----------+
+ | CONFIRMED |---------------->| CANCELLED |
+ +-----------+                 +-----------+
 ```
 
-HELD and CONFIRMED block the slot. EXPIRED does not.
+OFFERED, HELD and CONFIRMED block the slot. EXPIRED and CANCELLED free it.
 
 ## 3. Request a booking
 
@@ -85,12 +94,13 @@ requestBooking(candidateName, visaType, slotStart?, advisorId?)
 +--------------------------------------------------+
 |  INSIDE THE MUTEX (one request at a time)        |
 |                                                  |
-|  1. compute free slots for this duration         |
-|     (lapsed holds no longer count)               |
-|  2. pick slot: requested one, else the earliest  |
-|  3. none free? ---> SLOT_UNAVAILABLE             |
+|  1. settle: release lapsed holds, offer freed    |
+|     slots to the waitlist (section 7)            |
+|  2. compute free slots for this duration         |
+|  3. pick slot: requested one, else the earliest  |
+|  4. none free? ---> SLOT_UNAVAILABLE             |
 |                     or NO_SLOT_AVAILABLE         |
-|  4. save booking as HELD                         |
+|  5. save booking as HELD                         |
 +--------------------------------------------------+
         |
         v
@@ -98,7 +108,7 @@ requestBooking(candidateName, visaType, slotStart?, advisorId?)
 ```
 
 The repositories are async, so a second request could otherwise slip in
-between step 1 and step 4. The mutex queues requests so that cannot
+between step 2 and step 5. The mutex queues requests so that cannot
 happen within one process. With several instances, a database constraint
 has to take over this job (see README, "Taking it to production").
 
@@ -112,10 +122,10 @@ confirmBooking(bookingId, advisorId)
         |
   belongs to this advisor? ------- no --> FORBIDDEN
         |
-  hold still live? --------------- no --> mark EXPIRED, HOLD_EXPIRED
+  hold lapsed? ------------------- yes -> HOLD_EXPIRED
         |
   status is HELD? ---------------- no --> INVALID_STATE
-        |
+        |                                 (e.g. still OFFERED, or CANCELLED)
         |
         v
   status = CONFIRMED
@@ -159,11 +169,72 @@ separate windows, so no slot spans the 3 minute gap.
             +------------------------------+
                  |                  |
                  v                  v
-  On every read / write       HoldSweeper (every 30s)
-  a hold past expiresAt       marks stale holds EXPIRED
-  is treated as expired       so stored status stays true
+  On every read                On every write, and on the
+  a hold or offer past         HoldSweeper tick (every 5s):
+  expiresAt no longer          settle() marks it EXPIRED and
+  blocks its slot              offers the slot to the waitlist
 ```
 
-Correctness comes from the left side: it does not depend on the timer
-firing. The sweeper only keeps stored data tidy, and is where a waitlist
-offer would be triggered.
+No double booking and correct availability come from the left side and the
+mutex; they do not depend on the timer firing. The timer only matters when
+no requests are arriving: it makes sure waitlist offers still go out.
+
+## 7. Settle: the waitlist gets first refusal
+
+```
+  requestBooking | confirmBooking | cancelBooking
+  joinWaitlist   | acceptOffer    | sweeper (every 5s)
+                        |
+                        v
++----------------------------------------------------------+
+|  MUTEX                                                   |
+|                                                          |
+|  1. lapsed HELD    -> EXPIRED      } remember which      |
+|     lapsed OFFERED -> EXPIRED      } advisors were       |
+|       (its waitlist entry -> EXPIRED, turn missed)       |
+|     cancelled booking              } freed               |
+|                                                          |
+|  2. nothing freed? stop.                                 |
+|                                                          |
+|  3. WAITING entries for a freed advisor (or "any"),      |
+|     oldest first:                                        |
+|       slot fits their visa type?                         |
+|         no  -> skip to the next entry                    |
+|         yes -> booking OFFERED, expiresAt = now + 10 min |
+|                entry   OFFERED                           |
+|                                                          |
+|  4. only now does the caller's own work run              |
+|     (e.g. find a slot for a new request)                 |
++----------------------------------------------------------+
+```
+
+Without step 4's ordering there is a race: a hold lapses, a new request
+arrives before the sweeper, and takes the slot ahead of someone who was
+already waiting. Because every write settles first, inside the same lock,
+whoever arrives first after the lapse hands the slot to the waitlist.
+
+"Skip to the next entry" means the queue is never blocked: a freed 30 minute
+gap goes to the first type A candidate even if a type B candidate is ahead.
+
+## 8. Waitlist entry lifecycle
+
+```
+joinWaitlist(candidateName, visaType, advisorId?)
+        |
+        v
+  slot available right now? ---- yes --> SLOTS_AVAILABLE
+        |                                (use requestBooking)
+        no
+        v
+   +---------+   settle offers    +---------+   acceptOffer   +----------+
+   | WAITING |------------------->| OFFERED |---------------->| ACCEPTED |
+   +---------+   a freed slot     +---------+   (in 10 min)   +----------+
+                                       |                           |
+                                       | 10 min, no answer         v
+                                       v                    booking is HELD,
+                                  +---------+               advisor confirms
+                                  | EXPIRED |               as in section 4
+                                  +---------+
+                                  out of the queue;
+                                  slot goes to the next entry
+```
