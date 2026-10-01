@@ -265,4 +265,103 @@ describe('Booking API (e2e)', () => {
       }
     });
   });
+
+  describe('waitlist', () => {
+    const JOIN = `mutation ($input: JoinWaitlistInput!) {
+      joinWaitlist(input: $input) { id candidateName visaType status joinedAt offer { id } }
+    }`;
+    const ENTRY = `query ($id: ID!) {
+      waitlistEntry(id: $id) { status offer { id status start expiresAt advisor { id } } }
+    }`;
+    const ACCEPT = `mutation ($input: AcceptOfferInput!) { acceptOffer(input: $input) { id status expiresAt } }`;
+    const CANCEL = `mutation ($input: CancelBookingInput!) { cancelBooking(input: $input) { id status cancelledAt } }`;
+    const BOOKING = `query ($id: ID!) { booking(id: $id) { id status candidateName } }`;
+    const WAITLIST = `query ($status: WaitlistStatus) { waitlist(status: $status) { candidateName status } }`;
+
+    /** Books and confirms every type B slot, so nothing lapses when the clock moves. */
+    async function fillAllTypeB(): Promise<string[]> {
+      const ids: string[] = [];
+      for (;;) {
+        const res = await gql(REQUEST, { input: { candidateName: `Filler ${ids.length}`, visaType: 'B' } });
+        if (res.errors) break;
+        const { id, advisor } = res.data.requestBooking;
+        await gql(CONFIRM, { input: { bookingId: id, advisorId: advisor.id } });
+        ids.push(id);
+      }
+      return ids;
+    }
+
+    it('refuses to join while a slot is available', async () => {
+      const res = await gql(JOIN, { input: { candidateName: 'Wanda', visaType: 'B' } });
+      expect(res.errors?.[0].extensions.code).toBe('SLOTS_AVAILABLE');
+    });
+
+    it('runs the full path: join, cancellation, offer, accept, advisor confirms', async () => {
+      const [firstBooking] = await fillAllTypeB();
+
+      const joined = await gql(JOIN, { input: { candidateName: ' Wanda ', visaType: 'B' } });
+      expect(joined.data.joinWaitlist).toMatchObject({ candidateName: 'Wanda', status: 'WAITING', offer: null });
+      const entryId = joined.data.joinWaitlist.id;
+
+      const cancelled = await gql(CANCEL, { input: { bookingId: firstBooking } });
+      expect(cancelled.data.cancelBooking.status).toBe('CANCELLED');
+
+      const entry = (await gql(ENTRY, { id: entryId })).data.waitlistEntry;
+      expect(entry).toMatchObject({
+        status: 'OFFERED',
+        offer: {
+          status: 'OFFERED',
+          start: '2025-03-10T09:00:00.000Z',
+          expiresAt: new Date(clock.now().getTime() + 10 * MINUTE).toISOString(),
+        },
+      });
+
+      // A walk-in cannot take the offered slot.
+      const walkIn = await gql(REQUEST, { input: { candidateName: 'Walk-in', visaType: 'B' } });
+      expect(walkIn.errors?.[0].extensions.code).toBe('NO_SLOT_AVAILABLE');
+
+      clock.advance(5 * MINUTE);
+      const accepted = await gql(ACCEPT, { input: { waitlistEntryId: entryId } });
+      expect(accepted.data.acceptOffer).toMatchObject({ id: entry.offer.id, status: 'HELD' });
+
+      const confirmed = await gql(CONFIRM, {
+        input: { bookingId: entry.offer.id, advisorId: entry.offer.advisor.id },
+      });
+      expect(confirmed.data.confirmBooking.status).toBe('CONFIRMED');
+      expect((await gql(BOOKING, { id: entry.offer.id })).data.booking).toMatchObject({
+        status: 'CONFIRMED',
+        candidateName: 'Wanda',
+      });
+    });
+
+    it('passes a missed offer to the next candidate', async () => {
+      const [firstBooking] = await fillAllTypeB();
+      const first = (await gql(JOIN, { input: { candidateName: 'First', visaType: 'B' } })).data.joinWaitlist;
+      clock.advance(MINUTE);
+      await gql(JOIN, { input: { candidateName: 'Second', visaType: 'B' } });
+      await gql(CANCEL, { input: { bookingId: firstBooking } });
+
+      clock.advance(10 * MINUTE);
+      const late = await gql(ACCEPT, { input: { waitlistEntryId: first.id } });
+      expect(late.errors?.[0].extensions.code).toBe('OFFER_EXPIRED');
+
+      expect((await gql(WAITLIST)).data.waitlist).toEqual([
+        { candidateName: 'First', status: 'EXPIRED' },
+        { candidateName: 'Second', status: 'OFFERED' },
+      ]);
+      expect((await gql(WAITLIST, { status: 'OFFERED' })).data.waitlist).toHaveLength(1);
+    });
+
+    it('returns null for an unknown booking or waitlist entry', async () => {
+      expect((await gql(BOOKING, { id: 'missing' })).data.booking).toBeNull();
+      expect((await gql(ENTRY, { id: 'missing' })).data.waitlistEntry).toBeNull();
+    });
+
+    it('rejects cancelling an unknown booking and accepting an unknown entry', async () => {
+      const cancel = await gql(CANCEL, { input: { bookingId: 'missing' } });
+      expect(cancel.errors?.[0].extensions.code).toBe('BOOKING_NOT_FOUND');
+      const accept = await gql(ACCEPT, { input: { waitlistEntryId: 'missing' } });
+      expect(accept.errors?.[0].extensions.code).toBe('WAITLIST_ENTRY_NOT_FOUND');
+    });
+  });
 });

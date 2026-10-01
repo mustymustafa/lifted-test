@@ -5,7 +5,7 @@ describe('loadConfig', () => {
     expect(loadConfig({})).toEqual({
       port: 3000,
       holdMs: 600_000,
-      sweepIntervalMs: 30_000,
+      sweepIntervalMs: 5_000,
       seedPath: 'data/seed.json',
     });
   });

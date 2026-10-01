@@ -2,9 +2,13 @@ import { VISA_RULES, VisaType } from './visa-type';
 import { Interval } from './slot-calculator';
 
 export enum BookingStatus {
+  /** Offered to a waitlisted candidate, who has not accepted yet. */
+  OFFERED = 'OFFERED',
+  /** On hold while the advisor confirms. */
   HELD = 'HELD',
   CONFIRMED = 'CONFIRMED',
   EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
 }
 
 export interface Booking {
@@ -16,13 +20,18 @@ export interface Booking {
   end: Date;
   status: BookingStatus;
   createdAt: Date;
-  /** When the hold lapses if the advisor has not confirmed. */
+  /** When the hold (or waitlist offer) lapses if nobody acts on it. */
   expiresAt: Date;
   confirmedAt?: Date;
+  cancelledAt?: Date;
 }
 
+const isTimeLimited = (status: BookingStatus): boolean =>
+  status === BookingStatus.HELD || status === BookingStatus.OFFERED;
+
+/** True for a hold or a waitlist offer whose 10 minutes have run out. */
 export function isHoldExpired(booking: Booking, now: Date): boolean {
-  return booking.status === BookingStatus.HELD && booking.expiresAt.getTime() <= now.getTime();
+  return isTimeLimited(booking.status) && booking.expiresAt.getTime() <= now.getTime();
 }
 
 /**
@@ -32,7 +41,7 @@ export function isHoldExpired(booking: Booking, now: Date): boolean {
  */
 export function blocksAvailability(booking: Booking, now: Date): boolean {
   if (booking.status === BookingStatus.CONFIRMED) return true;
-  return booking.status === BookingStatus.HELD && !isHoldExpired(booking, now);
+  return isTimeLimited(booking.status) && !isHoldExpired(booking, now);
 }
 
 /** The time an advisor is unavailable because of a booking: the call plus the break after it. */

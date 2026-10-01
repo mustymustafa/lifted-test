@@ -4,10 +4,11 @@ import { Clock } from '../../common/clock';
 import { AppConfig } from '../../common/config';
 import { DomainError } from '../../common/errors';
 import { Mutex } from '../../common/mutex';
-import { Booking, BookingStatus, isHoldExpired } from '../domain/booking';
+import { Booking, BookingStatus } from '../domain/booking';
 import { VisaType } from '../domain/visa-type';
 import { BookingRepository } from '../repositories/booking.repository';
 import { AvailabilityService } from './availability.service';
+import { SettleResult, SettlementService } from './settlement.service';
 
 export interface RequestBookingCommand {
   candidateName: string;
@@ -40,6 +41,7 @@ export class BookingService {
   constructor(
     private readonly bookings: BookingRepository,
     private readonly availability: AvailabilityService,
+    private readonly settlement: SettlementService,
     private readonly clock: Clock,
     private readonly config: AppConfig,
     private readonly mutex: Mutex,
@@ -48,9 +50,11 @@ export class BookingService {
   /**
    * Places a slot on hold for the candidate. The check ("is it free?") and the
    * save happen inside the mutex, so two requests can never hold the same slot.
+   * Settling first gives any freed slot to the waitlist before this request looks.
    */
   request(command: RequestBookingCommand): Promise<Booking> {
     return this.mutex.runExclusive(async () => {
+      await this.settlement.settle();
       const slots = await this.availability.findSlots({
         visaType: command.visaType,
         advisorId: command.advisorId,
@@ -83,30 +87,50 @@ export class BookingService {
   /** The assigned advisor confirms a held booking before the hold lapses. */
   confirm(bookingId: string, advisorId: string): Promise<Booking> {
     return this.mutex.runExclusive(async () => {
+      await this.settlement.settle();
       const booking = await this.bookings.findById(bookingId);
       if (!booking) throw new DomainError('BOOKING_NOT_FOUND', `Booking ${bookingId} does not exist`);
       if (booking.advisorId !== advisorId) {
         throw new DomainError('FORBIDDEN', 'Only the assigned advisor can confirm this booking');
       }
-
-      const now = this.clock.now();
-      if (isHoldExpired(booking, now)) {
-        await this.bookings.save({ ...booking, status: BookingStatus.EXPIRED });
+      if (booking.status === BookingStatus.EXPIRED) {
         throw new DomainError('HOLD_EXPIRED', 'The hold on this booking has expired');
       }
       if (booking.status !== BookingStatus.HELD) {
         throw new DomainError('INVALID_STATE', `Booking is ${booking.status}, not HELD`);
       }
 
-      const confirmed: Booking = { ...booking, status: BookingStatus.CONFIRMED, confirmedAt: now };
+      const confirmed: Booking = { ...booking, status: BookingStatus.CONFIRMED, confirmedAt: this.clock.now() };
       await this.bookings.save(confirmed);
       return confirmed;
     });
   }
 
+  /** Cancels a held or confirmed booking and offers the freed time to the waitlist. */
+  cancel(bookingId: string): Promise<Booking> {
+    return this.mutex.runExclusive(async () => {
+      await this.settlement.settle();
+      const booking = await this.bookings.findById(bookingId);
+      if (!booking) throw new DomainError('BOOKING_NOT_FOUND', `Booking ${bookingId} does not exist`);
+      if (booking.status !== BookingStatus.HELD && booking.status !== BookingStatus.CONFIRMED) {
+        throw new DomainError('INVALID_STATE', `Booking is ${booking.status} and cannot be cancelled`);
+      }
+
+      const cancelled: Booking = { ...booking, status: BookingStatus.CANCELLED, cancelledAt: this.clock.now() };
+      await this.bookings.save(cancelled);
+      await this.settlement.settle([booking.advisorId]);
+      return cancelled;
+    });
+  }
+
+  async get(bookingId: string): Promise<Booking | undefined> {
+    await this.settle();
+    return this.bookings.findById(bookingId);
+  }
+
   /** Bookings ordered by start time, with filters and cursor pagination. */
   async list(filter: BookingFilter = {}, first = 50, after?: string): Promise<BookingPage> {
-    await this.expireStaleHolds();
+    await this.settle();
     const matches = (await this.bookings.findAll())
       .filter(
         (b) =>
@@ -139,17 +163,11 @@ export class BookingService {
   }
 
   /**
-   * Marks lapsed holds as EXPIRED so stored status matches reality. Availability
-   * does not depend on this having run; it is bookkeeping. Returns how many changed.
+   * Releases lapsed holds and offers, and offers freed slots to the waitlist.
+   * Availability does not depend on this having run. Called by the sweeper so
+   * waitlist offers still go out when no requests are coming in.
    */
-  expireStaleHolds(): Promise<number> {
-    return this.mutex.runExclusive(async () => {
-      const now = this.clock.now();
-      const stale = (await this.bookings.findAll()).filter((b) => isHoldExpired(b, now));
-      for (const booking of stale) {
-        await this.bookings.save({ ...booking, status: BookingStatus.EXPIRED });
-      }
-      return stale.length;
-    });
+  settle(): Promise<SettleResult> {
+    return this.mutex.runExclusive(() => this.settlement.settle());
   }
 }

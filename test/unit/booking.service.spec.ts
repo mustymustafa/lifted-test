@@ -1,37 +1,7 @@
-import { AppConfig } from '../../src/common/config';
-import { Mutex } from '../../src/common/mutex';
-import { Advisor } from '../../src/scheduling/domain/advisor';
 import { BookingStatus } from '../../src/scheduling/domain/booking';
 import { VisaType } from '../../src/scheduling/domain/visa-type';
-import { InMemoryAdvisorRepository } from '../../src/scheduling/repositories/advisor.repository';
-import { InMemoryBookingRepository } from '../../src/scheduling/repositories/booking.repository';
-import { AvailabilityService } from '../../src/scheduling/services/availability.service';
-import { BookingService } from '../../src/scheduling/services/booking.service';
-import { FakeClock, MINUTE } from '../support/fake-clock';
-
-const t = (time: string): Date => new Date(`2025-03-10T${time}:00Z`);
-
-const SOFIA: Advisor = { id: 'sofia', name: 'Sofia', windows: [{ start: t('09:00'), end: t('10:50') }] };
-const RAJAN: Advisor = {
-  id: 'rajan',
-  name: 'Rajan',
-  windows: [
-    { start: t('09:00'), end: t('09:30') },
-    { start: t('09:33'), end: t('11:30') },
-  ],
-};
-
-const config: AppConfig = { port: 0, holdMs: 10 * MINUTE, sweepIntervalMs: 0, seedPath: '' };
-
-function setup(advisors: Advisor[] = [SOFIA, RAJAN]) {
-  const clock = new FakeClock();
-  const bookingRepo = new InMemoryBookingRepository();
-  const availability = new AvailabilityService(new InMemoryAdvisorRepository(advisors), bookingRepo, clock);
-  const service = new BookingService(bookingRepo, availability, clock, config, new Mutex());
-  const slotStarts = async (advisorId: string, visaType: VisaType) =>
-    (await availability.findSlots({ advisorId, visaType })).map((s) => s.start.toISOString().slice(11, 16));
-  return { clock, bookingRepo, availability, service, slotStarts };
-}
+import { MINUTE } from '../support/fake-clock';
+import { setup, SOFIA, t } from '../support/harness';
 
 describe('BookingService.request', () => {
   it('holds the earliest slot across advisors when no preference is given', async () => {
@@ -248,7 +218,7 @@ describe('hold expiry', () => {
     expect(second.id).not.toBe(first.id);
   });
 
-  it('expireStaleHolds marks only lapsed holds and reports the count', async () => {
+  it('settle marks only lapsed holds and reports the count', async () => {
     const { service, clock, bookingRepo } = setup();
     const lapsed = await service.request({ candidateName: 'Lapsed', visaType: VisaType.A, advisorId: 'sofia' });
     const confirmed = await service.request({ candidateName: 'Confirmed', visaType: VisaType.A, advisorId: 'rajan' });
@@ -257,13 +227,65 @@ describe('hold expiry', () => {
     const fresh = await service.request({ candidateName: 'Fresh', visaType: VisaType.A, advisorId: 'sofia' });
     clock.advance(4 * MINUTE);
 
-    expect(await service.expireStaleHolds()).toBe(1);
-    expect(await service.expireStaleHolds()).toBe(0);
+    expect(await service.settle()).toEqual({ expired: 1, offered: 0 });
+    expect(await service.settle()).toEqual({ expired: 0, offered: 0 });
 
     const status = async (id: string) => (await bookingRepo.findById(id))?.status;
     expect(await status(lapsed.id)).toBe(BookingStatus.EXPIRED);
     expect(await status(confirmed.id)).toBe(BookingStatus.CONFIRMED);
     expect(await status(fresh.id)).toBe(BookingStatus.HELD);
+  });
+});
+
+describe('BookingService.cancel', () => {
+  it('cancels a confirmed booking and returns the slot to the pool', async () => {
+    const { service, clock, slotStarts } = setup();
+    const held = await service.request({ candidateName: 'B', visaType: VisaType.B, advisorId: 'sofia' });
+    await service.confirm(held.id, 'sofia');
+    expect(await slotStarts('sofia', VisaType.B)).toEqual([]);
+
+    const cancelled = await service.cancel(held.id);
+
+    expect(cancelled).toMatchObject({ status: BookingStatus.CANCELLED, cancelledAt: clock.now() });
+    expect(await slotStarts('sofia', VisaType.B)).toEqual(['09:00']);
+  });
+
+  it('cancels a held booking', async () => {
+    const { service } = setup();
+    const held = await service.request({ candidateName: 'A', visaType: VisaType.A });
+    await expect(service.cancel(held.id)).resolves.toMatchObject({ status: BookingStatus.CANCELLED });
+  });
+
+  it('rejects cancelling twice, an expired booking, or an unknown one', async () => {
+    const { service, clock } = setup();
+    const first = await service.request({ candidateName: 'A', visaType: VisaType.A });
+    await service.cancel(first.id);
+    await expect(service.cancel(first.id)).rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+    const second = await service.request({ candidateName: 'B', visaType: VisaType.A });
+    clock.advance(10 * MINUTE);
+    await expect(service.cancel(second.id)).rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+    await expect(service.cancel('missing')).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' });
+  });
+
+  it('cannot be confirmed after it is cancelled', async () => {
+    const { service } = setup();
+    const held = await service.request({ candidateName: 'A', visaType: VisaType.A, advisorId: 'sofia' });
+    await service.cancel(held.id);
+    await expect(service.confirm(held.id, 'sofia')).rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+});
+
+describe('BookingService.get', () => {
+  it('returns one booking with its current status, or nothing', async () => {
+    const { service, clock } = setup();
+    const held = await service.request({ candidateName: 'A', visaType: VisaType.A });
+    expect((await service.get(held.id))?.status).toBe(BookingStatus.HELD);
+
+    clock.advance(10 * MINUTE);
+    expect((await service.get(held.id))?.status).toBe(BookingStatus.EXPIRED);
+    expect(await service.get('missing')).toBeUndefined();
   });
 });
 

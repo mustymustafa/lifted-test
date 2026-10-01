@@ -10,7 +10,10 @@ export type ErrorCode =
   | 'NO_SLOT_AVAILABLE'
   | 'SLOT_UNAVAILABLE'
   | 'INVALID_STATE'
-  | 'HOLD_EXPIRED';
+  | 'HOLD_EXPIRED'
+  | 'WAITLIST_ENTRY_NOT_FOUND'
+  | 'SLOTS_AVAILABLE'
+  | 'OFFER_EXPIRED';
 
 /** Business rule failure. Services throw this and know nothing about GraphQL. */
 export class DomainError extends Error {

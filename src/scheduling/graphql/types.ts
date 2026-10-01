@@ -1,6 +1,7 @@
 import { Field, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { BookingStatus } from '../domain/booking';
 import { VisaType } from '../domain/visa-type';
+import { WaitlistStatus } from '../domain/waitlist';
 
 registerEnumType(VisaType, {
   name: 'VisaType',
@@ -10,6 +11,7 @@ registerEnumType(VisaType, {
   },
 });
 registerEnumType(BookingStatus, { name: 'BookingStatus' });
+registerEnumType(WaitlistStatus, { name: 'WaitlistStatus' });
 
 // ---------- Output DTOs ----------
 
@@ -37,9 +39,10 @@ export class BookingType {
   @Field(() => Date) end!: Date;
   @Field(() => BookingStatus) status!: BookingStatus;
   @Field(() => Date) createdAt!: Date;
-  @Field(() => Date, { description: 'When the hold lapses if the advisor has not confirmed.' })
+  @Field(() => Date, { description: 'When the hold or waitlist offer lapses if nobody acts on it.' })
   expiresAt!: Date;
   @Field(() => Date, { nullable: true }) confirmedAt?: Date;
+  @Field(() => Date, { nullable: true }) cancelledAt?: Date;
 }
 
 @ObjectType('BookingPage')
@@ -48,6 +51,18 @@ export class BookingPageType {
   @Field(() => Int) totalCount!: number;
   @Field(() => ID, { nullable: true, description: 'Pass as `after` to get the next page.' })
   nextCursor?: string;
+}
+
+@ObjectType('WaitlistEntry')
+export class WaitlistEntryType {
+  @Field(() => ID, { description: 'Keep this: it is what the candidate uses to accept an offer.' })
+  id!: string;
+  @Field(() => String) candidateName!: string;
+  @Field(() => VisaType) visaType!: VisaType;
+  @Field(() => ID, { nullable: true, description: 'Empty means any advisor.' }) advisorId?: string;
+  @Field(() => WaitlistStatus) status!: WaitlistStatus;
+  @Field(() => Date) joinedAt!: Date;
+  bookingId?: string;
 }
 
 // ---------- Input DTOs (shape only; rules live in the zod schemas) ----------
@@ -87,4 +102,22 @@ export class BookingsFilterInput {
   @Field(() => VisaType, { nullable: true }) visaType?: VisaType;
   @Field(() => Date, { nullable: true }) from?: Date;
   @Field(() => Date, { nullable: true }) to?: Date;
+}
+
+@InputType()
+export class CancelBookingInput {
+  @Field(() => ID) bookingId!: string;
+}
+
+@InputType()
+export class JoinWaitlistInput {
+  @Field(() => String) candidateName!: string;
+  @Field(() => VisaType) visaType!: VisaType;
+  @Field(() => ID, { nullable: true, description: 'Omit to accept any advisor.' })
+  advisorId?: string;
+}
+
+@InputType()
+export class AcceptOfferInput {
+  @Field(() => ID) waitlistEntryId!: string;
 }

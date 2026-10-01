@@ -2,7 +2,8 @@
 
 A GraphQL API for booking consultations with immigration advisors: list
 bookable slots, hold one for a candidate, let the advisor confirm it within
-10 minutes, and list bookings.
+10 minutes, list bookings, and run a waitlist that offers freed slots to
+candidates in order.
 
 Built with NestJS, GraphQL (Apollo) and zod. Data lives in memory.
 
@@ -35,7 +36,7 @@ npm test
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
 | `HOLD_MINUTES` | `10` | How long a hold lasts. Set to `1` to watch expiry by hand |
-| `SWEEP_INTERVAL_SECONDS` | `30` | How often lapsed holds are marked `EXPIRED`. `0` turns the timer off |
+| `SWEEP_INTERVAL_SECONDS` | `5` | How often lapsed holds are released and offered to the waitlist. `0` turns the timer off |
 | `SEED_PATH` | `data/seed.json` | Advisor availability file |
 
 ### Trying it with curl
@@ -66,9 +67,49 @@ paging: `first`, `after`):
 curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"{ bookings(filter: {status: CONFIRMED}, first: 20) { totalCount nextCursor items { id candidateName visaType status start end advisor { name } } } }"}'
 ```
 
+Fetch one booking, or cancel it:
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"{ booking(id: \"PASTE_ID\") { id status candidateName start end } }"}'
+```
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"mutation { cancelBooking(input: {bookingId: \"PASTE_ID\"}) { id status cancelledAt } }"}'
+```
+
+**Waitlist.** Joining only works when nothing is bookable for that visa type
+(otherwise you get `SLOTS_AVAILABLE`). The quickest way to see it by hand:
+request type B bookings until you get `NO_SLOT_AVAILABLE` (17 with the seed
+data), then:
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"mutation { joinWaitlist(input: {candidateName: \"Wanda Okafor\", visaType: B}) { id status joinedAt } }"}'
+```
+
+Cancel one of the bookings, then check the entry. It will be `OFFERED` with a
+booking attached:
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"{ waitlistEntry(id: \"PASTE_ENTRY_ID\") { status offer { id status start end expiresAt advisor { id name } } } }"}'
+```
+
+The candidate accepts within 10 minutes. The booking becomes `HELD` and the
+advisor confirms it with `confirmBooking` as usual:
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"mutation { acceptOffer(input: {waitlistEntryId: \"PASTE_ENTRY_ID\"}) { id status expiresAt } }"}'
+```
+
+See the whole queue:
+
+```bash
+curl -s localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"{ waitlist { id candidateName visaType status joinedAt } }"}'
+```
+
 Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 `ADVISOR_NOT_FOUND`, `BOOKING_NOT_FOUND`, `FORBIDDEN`, `NO_SLOT_AVAILABLE`,
-`SLOT_UNAVAILABLE`, `INVALID_STATE`, `HOLD_EXPIRED`.
+`SLOT_UNAVAILABLE`, `INVALID_STATE`, `HOLD_EXPIRED`, `SLOTS_AVAILABLE`,
+`WAITLIST_ENTRY_NOT_FOUND`, `OFFER_EXPIRED`.
 
 ## What is built
 
@@ -77,9 +118,10 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 | 1. Availability | Done. Stretch: filter by visa type, advisor and date range |
 | 2. Create a booking request | Done. 10 minute hold; candidate can pick a slot or be assigned the earliest |
 | 3. Booking confirmation | Done. Only the assigned advisor, only while the hold is live |
-| 4. Bookings | Done. Stretch: filters and cursor pagination |
+| 4. Bookings | Done. Stretch: filters, cursor pagination, fetch one by id |
 | Stretch: advisor breaks | Done. 5 min after type A, 10 min after type B |
-| Stretch: waitlist | Not built. Design sketched below |
+| Stretch: waitlist | Done. Join, automatic offer on expiry or cancellation, accept within 10 minutes |
+| Extra: cancel a booking | Done. Needed for the waitlist trigger |
 
 ## Tech choices
 
@@ -107,7 +149,7 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   so it is the most heavily tested file.
 - **Injected clock.** Nothing calls `new Date()` directly. Tests move a fake
   clock forward to check expiry at 9:59.999 and 10:00.000 without waiting.
-- **Jest + supertest.** 99 tests, about 97% line coverage.
+- **Jest + supertest.** 131 tests, about 98% line coverage.
 
 ### Decisions worth knowing about
 
@@ -117,9 +159,33 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   in-process [mutex](src/common/mutex.ts). Tests fire 20 to 25 parallel
   requests at one slot and assert exactly one wins.
 - **Hold expiry does not depend on a timer.** Whether a hold still blocks a
-  slot is decided from its `expiresAt` and the clock on every read. The
-  background sweeper only updates the stored status to `EXPIRED`. If the timer
-  is late or off, availability is still correct.
+  slot is decided from its `expiresAt` and the clock on every read. If the
+  background sweeper is late or off, availability is still correct.
+- **The waitlist gets first refusal, without relying on the timer.** There is
+  a race here: a hold lapses, a new request arrives before the sweeper runs,
+  and takes the slot ahead of someone already waiting. To close it, every
+  write first "settles" inside the mutex
+  ([settlement.service.ts](src/scheduling/services/settlement.service.ts)):
+  release lapsed holds, offer the freed time to the waitlist, and only then do
+  its own work. The sweeper runs the same step every 5 seconds so offers still
+  go out when no requests are arriving.
+- **"First eligible" skips, it does not block.** A freed 30 minute gap goes
+  to the first type A candidate even if a type B candidate joined earlier.
+- **The settle step is scoped by advisor.** It only looks at waitlist entries
+  that could use an advisor whose time was just freed (entries for that
+  advisor, or for "any advisor"), rather than the whole queue. One queue with
+  an optional advisor, not a queue per advisor: most candidates accept any
+  advisor and would otherwise sit in every queue.
+- **"The candidate has 10 minutes to confirm" is read as the candidate
+  accepting the offer.** The brief has the advisor confirming everywhere else,
+  so an accepted offer becomes a normal `HELD` booking and the advisor gets a
+  fresh 10 minutes. A waitlisted candidate asked earlier and may have gone
+  elsewhere, so booking them without asking seemed wrong. Cost: a slot can be
+  blocked for up to 20 minutes before it is confirmed or released.
+- **A missed offer removes the candidate from the queue.** They had their
+  turn; the slot goes to the next eligible entry.
+- **Joining the waitlist is its own mutation**, allowed only when nothing is
+  bookable. That keeps `requestBooking` returning one type.
 - **Breaks are part of the blocked time.** A booking blocks
   `[start, end + break)`. A new slot is only offered if its own break also
   fits before the next booking. The break may run past the end of a window;
@@ -156,33 +222,27 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   per advisor would allow more throughput, but auto-assignment looks across
   advisors, so I kept it simple.
 - **No authentication.** `confirmBooking` takes an `advisorId` and checks it
-  matches the booking. Anyone can claim to be any advisor.
+  matches the booking. Anyone can claim to be any advisor, cancel any booking,
+  or accept an offer if they know the waitlist entry id.
+- **A slot can look free for a few seconds and then be refused.**
+  `availableSlots` is read-only, so right after a hold lapses it lists the
+  slot; a booking attempt then settles the waitlist first and may return
+  `SLOT_UNAVAILABLE`.
+- **Waitlisted candidates are not notified.** They find their offer by
+  polling `waitlistEntry`. Offers can be up to one sweep (5 seconds) late when
+  the API is idle.
+- **No way to decline an offer or leave the waitlist.** An unwanted offer
+  blocks the slot until it lapses.
+- **Nothing stops the same person joining the waitlist twice.** There is no
+  candidate identity, only a name.
 - **Cursor pagination is basic.** The cursor is a booking id and the list is
   filtered and sorted in memory on every call.
 - **`advisor` on a booking is resolved one at a time.** Free in memory, an
   N+1 query against a database.
-- **No cancel mutation**, so a confirmed booking is permanent.
 
-With more time, in order: the waitlist, a cancel mutation, a per-advisor
-lock, and property-based tests for the slot calculator (generate random
-windows and bookings, assert no slot ever overlaps a blocked range).
-
-### Waitlist (not built)
-
-How I would add it:
-
-1. `requestBooking` with `joinWaitlist: true` creates a waitlist entry
-   (candidate, visa type, optional advisor, created time) instead of
-   returning `NO_SLOT_AVAILABLE`.
-2. When the sweeper expires a hold, or a booking is cancelled, it walks the
-   waitlist oldest first and tries to place each entry using the same
-   request path. "First eligible" matters: a freed 30 minute gap suits a
-   type A candidate even if a type B candidate is ahead in the queue.
-3. A placed entry becomes a normal `HELD` booking with its own 10 minute
-   window, so nothing else changes.
-
-This is the one place where expiry would need the timer to be reliable,
-which is why it belongs with the production queue work below.
+With more time, in order: decline-offer and leave-waitlist mutations, a
+per-advisor lock, and property-based tests for the slot calculator (generate
+random windows and bookings, assert no slot ever overlaps a blocked range).
 
 ## Taking it to production
 
@@ -194,6 +254,10 @@ which is why it belongs with the production queue work below.
   confirmed rows. The database then rejects an overlapping insert no matter
   which instance sent it. The service catches that error and returns
   `SLOT_UNAVAILABLE`, or tries the next slot when auto-assigning.
+- Expire-and-offer in one transaction, reading waitlist rows with
+  `SELECT ... FOR UPDATE SKIP LOCKED` so two workers never make an offer to
+  the same candidate, and an index on `(status, advisor_id, joined_at)` so
+  the lookup stays small.
 - Confirm becomes one conditional update:
   `UPDATE ... SET status = 'CONFIRMED' WHERE id = $1 AND status = 'HELD' AND expires_at > now()`.
 - Use database time instead of each instance's clock, to avoid clock skew.
@@ -259,10 +323,11 @@ A simpler first step is to skip the queue and run only the scheduled sweep
 runs it). Less to operate, but side effects are up to a minute late. I would
 start there and add the queue when the lateness matters.
 
-- "The assigned IA receives the request" is not implemented. I would write an
-  outbox row in the same transaction as the hold and have a worker deliver
-  it (email, push), so a notification is never lost or sent for a hold that
-  failed to save.
+- "The assigned IA receives the request" and telling a waitlisted candidate
+  about their offer are not implemented. I would write an outbox row in the
+  same transaction as the hold or offer and have a worker deliver it (email,
+  push), so a notification is never lost or sent for a row that failed to
+  save.
 
 **Ingesting availability**
 
@@ -305,6 +370,10 @@ I used Claude Code (Claude Opus) throughout.
   first plan it proposed used Postgres in Docker; I pushed back because the
   brief asks for a simple local setup, and moved that to the production
   section instead.
+- **Design back-and-forth.** For the waitlist I proposed per-advisor queues
+  to cut the work per sweep and asked how a waitlisted candidate is protected
+  from a new request racing for the same freed slot. That discussion produced
+  the advisor-scoped settle step and the "every write settles first" rule.
 - **What I delegated.** Scaffolding, the implementation, the test suite and a
   first draft of this README.
 - **How the output was checked.**

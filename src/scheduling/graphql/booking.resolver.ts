@@ -5,8 +5,11 @@ import { BookingService } from '../services/booking.service';
 import {
   BookingsFilterDto,
   BookingsFilterSchema,
+  CancelBookingDto,
+  CancelBookingSchema,
   ConfirmBookingDto,
   ConfirmBookingSchema,
+  IdSchema,
   PageSizeSchema,
   RequestBookingDto,
   RequestBookingSchema,
@@ -16,6 +19,7 @@ import {
   BookingPageType,
   BookingsFilterInput,
   BookingType,
+  CancelBookingInput,
   ConfirmBookingInput,
   RequestBookingInput,
 } from './types';
@@ -45,6 +49,23 @@ export class BookingResolver {
     input: ConfirmBookingDto,
   ): Promise<BookingType> {
     return this.bookingService.confirm(input.bookingId, input.advisorId);
+  }
+
+  @Mutation(() => BookingType, {
+    description: 'Cancel a held or confirmed booking. The freed time is offered to the waitlist.',
+  })
+  cancelBooking(
+    @Args('input', { type: () => CancelBookingInput }, new ZodValidationPipe(CancelBookingSchema))
+    input: CancelBookingDto,
+  ): Promise<BookingType> {
+    return this.bookingService.cancel(input.bookingId);
+  }
+
+  @Query(() => BookingType, { nullable: true, description: 'One booking by id, e.g. to poll its status.' })
+  booking(
+    @Args('id', { type: () => ID }, new ZodValidationPipe(IdSchema)) id: string,
+  ): Promise<BookingType | undefined> {
+    return this.bookingService.get(id);
   }
 
   @Query(() => BookingPageType, { description: 'All bookings, ordered by start time.' })

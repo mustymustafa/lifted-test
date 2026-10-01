@@ -3,7 +3,7 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   HOLD_MINUTES: z.coerce.number().positive().default(10),
-  SWEEP_INTERVAL_SECONDS: z.coerce.number().min(0).default(30),
+  SWEEP_INTERVAL_SECONDS: z.coerce.number().min(0).default(5),
   SEED_PATH: z.string().min(1).default('data/seed.json'),
 });
 
