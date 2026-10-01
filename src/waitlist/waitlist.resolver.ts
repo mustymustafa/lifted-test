@@ -13,6 +13,9 @@ import {
   JoinWaitlistDto,
   JoinWaitlistInput,
   JoinWaitlistSchema,
+  LeaveWaitlistDto,
+  LeaveWaitlistInput,
+  LeaveWaitlistSchema,
   WaitlistEntryType,
   WaitlistStatusSchema,
 } from './waitlist.dto';
@@ -25,7 +28,8 @@ export class WaitlistResolver {
   ) {}
 
   @Mutation(() => WaitlistEntryType, {
-    description: 'Join the waitlist when no slot is available. Freed slots are offered oldest first.',
+    description:
+      'Join the waitlist when no slot is available. Freed slots are offered oldest first. A candidate can have one active request at a time.',
   })
   joinWaitlist(
     @Args('input', { type: () => JoinWaitlistInput }, new ZodValidationPipe(JoinWaitlistSchema))
@@ -42,6 +46,16 @@ export class WaitlistResolver {
     input: AcceptOfferDto,
   ): Promise<BookingType> {
     return this.waitlistService.acceptOffer(input.waitlistEntryId);
+  }
+
+  @Mutation(() => WaitlistEntryType, {
+    description: 'Give up a place on the waitlist, or decline an offer. A declined slot goes to the next candidate.',
+  })
+  leaveWaitlist(
+    @Args('input', { type: () => LeaveWaitlistInput }, new ZodValidationPipe(LeaveWaitlistSchema))
+    input: LeaveWaitlistDto,
+  ): Promise<WaitlistEntryType> {
+    return this.waitlistService.leave(input.waitlistEntryId);
   }
 
   @Query(() => [WaitlistEntryType], { description: 'The waitlist in the order candidates joined.' })

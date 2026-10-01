@@ -50,6 +50,16 @@ export class AcceptOfferInput {
 export const AcceptOfferSchema = z.object({ waitlistEntryId: IdSchema });
 export type AcceptOfferDto = z.infer<typeof AcceptOfferSchema>;
 
+// ---------- Leave the waitlist ----------
+
+@InputType()
+export class LeaveWaitlistInput {
+  @Field(() => ID) waitlistEntryId!: string;
+}
+
+export const LeaveWaitlistSchema = z.object({ waitlistEntryId: IdSchema });
+export type LeaveWaitlistDto = z.infer<typeof LeaveWaitlistSchema>;
+
 // ---------- List the waitlist ----------
 
 export const WaitlistStatusSchema = optional(z.enum(WaitlistStatus));

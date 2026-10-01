@@ -7,6 +7,7 @@ import { InMemoryBookingRepository } from '../../src/bookings/booking.repository
 import { InMemoryWaitlistRepository } from '../../src/waitlist/waitlist.repository';
 import { AvailabilityService } from '../../src/availability/availability.service';
 import { BookingService } from '../../src/bookings/booking.service';
+import { CandidateRequestPolicy } from '../../src/bookings/candidate-request.policy';
 import { SettlementService } from '../../src/waitlist/settlement.service';
 import { WaitlistService } from '../../src/waitlist/waitlist.service';
 import { FakeClock, MINUTE } from './fake-clock';
@@ -35,8 +36,9 @@ export function setup(advisors: Advisor[] = [SOFIA, RAJAN]) {
   const waitlistRepo = new InMemoryWaitlistRepository();
   const availability = new AvailabilityService(new InMemoryAdvisorRepository(advisors), bookingRepo, clock);
   const settlement = new SettlementService(bookingRepo, waitlistRepo, availability, clock, config);
-  const service = new BookingService(bookingRepo, availability, settlement, clock, config, mutex);
-  const waitlist = new WaitlistService(waitlistRepo, bookingRepo, availability, settlement, clock, config, mutex);
+  const policy = new CandidateRequestPolicy(bookingRepo, waitlistRepo, clock);
+  const service = new BookingService(bookingRepo, availability, settlement, policy, clock, config, mutex);
+  const waitlist = new WaitlistService(waitlistRepo, bookingRepo, availability, settlement, policy, clock, config, mutex);
   const slotStarts = async (advisorId: string, visaType: VisaType) =>
     (await availability.findSlots({ advisorId, visaType })).map((s) => s.start.toISOString().slice(11, 16));
   return { clock, bookingRepo, waitlistRepo, availability, service, waitlist, slotStarts };

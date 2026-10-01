@@ -31,7 +31,7 @@ export class BookingResolver {
   ) {}
 
   @Mutation(() => BookingType, {
-    description: `Request a booking. The slot is held for ${DEFAULT_HOLD_MINUTES} minutes while the advisor confirms.`,
+    description: `Request a booking. The slot is held for ${DEFAULT_HOLD_MINUTES} minutes while the advisor confirms. A candidate can have one active request at a time.`,
   })
   requestBooking(
     @Args('input', { type: () => RequestBookingInput }, new ZodValidationPipe(RequestBookingSchema))
@@ -51,7 +51,8 @@ export class BookingResolver {
   }
 
   @Mutation(() => BookingType, {
-    description: 'Cancel a held or confirmed booking. The freed time is offered to the waitlist.',
+    description:
+      'Cancel a held or confirmed booking. The freed time is offered to the waitlist, and the candidate can request again.',
   })
   cancelBooking(
     @Args('input', { type: () => CancelBookingInput }, new ZodValidationPipe(CancelBookingSchema))

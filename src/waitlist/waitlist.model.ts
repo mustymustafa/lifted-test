@@ -7,6 +7,8 @@ export enum WaitlistStatus {
   ACCEPTED = 'ACCEPTED',
   /** The candidate did not accept in time and has left the queue. */
   EXPIRED = 'EXPIRED',
+  /** The candidate gave up their place, or declined an offer. */
+  CANCELLED = 'CANCELLED',
 }
 
 export interface WaitlistEntry {

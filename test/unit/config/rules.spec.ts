@@ -1,5 +1,6 @@
 import {
   DEFAULT_HOLD_MINUTES,
+  MAX_ACTIVE_REQUESTS_PER_CANDIDATE,
   MINUTE,
   VISA_RULES,
   VisaType,
@@ -15,6 +16,7 @@ describe('business rules', () => {
     expect(VISA_RULES[VisaType.A]).toMatchObject({ label: 'Skilled Worker', durationMinutes: 30, breakMinutes: 5 });
     expect(VISA_RULES[VisaType.B]).toMatchObject({ label: 'Family / Dependent', durationMinutes: 60, breakMinutes: 10 });
     expect(DEFAULT_HOLD_MINUTES).toBe(10);
+    expect(MAX_ACTIVE_REQUESTS_PER_CANDIDATE).toBe(1);
   });
 
   it('has a rule for every visa type, with milliseconds derived from minutes', () => {

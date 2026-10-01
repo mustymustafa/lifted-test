@@ -44,6 +44,15 @@ export function blocksAvailability(booking: Booking, now: Date): boolean {
   return isTimeLimited(booking.status) && !isHoldExpired(booking, now);
 }
 
+/**
+ * How the API tells that two requests come from the same candidate. There is
+ * no login, so the name is all there is: compared ignoring case and extra
+ * spaces. The README covers the limits of this.
+ */
+export function candidateKey(name: string): string {
+  return name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 /** The time an advisor is unavailable because of a booking: the call plus the break after it. */
 export function blockedRange(booking: Booking): Interval {
   return {

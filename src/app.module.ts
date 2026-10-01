@@ -8,6 +8,7 @@ import { AvailabilityService } from './availability/availability.service';
 import { BookingRepository, InMemoryBookingRepository } from './bookings/booking.repository';
 import { BookingResolver } from './bookings/booking.resolver';
 import { BookingService } from './bookings/booking.service';
+import { CandidateRequestPolicy } from './bookings/candidate-request.policy';
 import { HoldSweeper } from './bookings/hold-sweeper';
 import { CommonModule } from './common/common.module';
 import { DomainErrorFilter } from './common/errors';
@@ -48,6 +49,7 @@ import { WaitlistService } from './waitlist/waitlist.service';
     // Business rules.
     AvailabilityService,
     SettlementService,
+    CandidateRequestPolicy,
     BookingService,
     WaitlistService,
     HoldSweeper,

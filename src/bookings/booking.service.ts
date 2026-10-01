@@ -7,6 +7,7 @@ import { Mutex } from '../common/mutex';
 import { Booking, BookingStatus } from './booking.model';
 import { DEFAULT_PAGE_SIZE, VisaType } from '../config/rules';
 import { BookingRepository } from './booking.repository';
+import { CandidateRequestPolicy } from './candidate-request.policy';
 import { AvailabilityService } from '../availability/availability.service';
 import { SettleResult, SettlementService } from '../waitlist/settlement.service';
 
@@ -42,6 +43,7 @@ export class BookingService {
     private readonly bookings: BookingRepository,
     private readonly availability: AvailabilityService,
     private readonly settlement: SettlementService,
+    private readonly policy: CandidateRequestPolicy,
     private readonly clock: Clock,
     private readonly config: AppConfig,
     private readonly mutex: Mutex,
@@ -51,10 +53,12 @@ export class BookingService {
    * Places a slot on hold for the candidate. The check ("is it free?") and the
    * save happen inside the mutex, so two requests can never hold the same slot.
    * Settling first gives any freed slot to the waitlist before this request looks.
+   * A candidate who already has an active request is refused.
    */
   request(command: RequestBookingCommand): Promise<Booking> {
     return this.mutex.runExclusive(async () => {
       await this.settlement.settle();
+      await this.policy.assertCanRequest(command.candidateName);
       const slots = await this.availability.findSlots({
         visaType: command.visaType,
         advisorId: command.advisorId,
@@ -106,7 +110,11 @@ export class BookingService {
     });
   }
 
-  /** Cancels a held or confirmed booking and offers the freed time to the waitlist. */
+  /**
+   * Cancels a held or confirmed booking and offers the freed time to the
+   * waitlist. Also what lets the candidate make a new request: they may only
+   * have one active request at a time.
+   */
   cancel(bookingId: string): Promise<Booking> {
     return this.mutex.runExclusive(async () => {
       await this.settlement.settle();

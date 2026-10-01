@@ -41,6 +41,13 @@ export const DEFAULT_HOLD_MINUTES = 10;
 /** How often the sweeper runs. Overridable with SWEEP_INTERVAL_SECONDS. */
 export const DEFAULT_SWEEP_INTERVAL_SECONDS = 5;
 
+/**
+ * How many active requests one candidate may have at a time. A request is
+ * active while it is a booking that is offered, on hold or confirmed, or a
+ * place on the waitlist. It stops counting once it is cancelled or expires.
+ */
+export const MAX_ACTIVE_REQUESTS_PER_CANDIDATE = 1;
+
 export const CANDIDATE_NAME_MAX_LENGTH = 120;
 
 export const DEFAULT_PAGE_SIZE = 50;

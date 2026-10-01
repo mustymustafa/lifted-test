@@ -8,6 +8,7 @@ import { Booking, BookingStatus } from '../bookings/booking.model';
 import { VisaType } from '../config/rules';
 import { WaitlistEntry, WaitlistStatus } from './waitlist.model';
 import { BookingRepository } from '../bookings/booking.repository';
+import { CandidateRequestPolicy } from '../bookings/candidate-request.policy';
 import { WaitlistRepository } from './waitlist.repository';
 import { AvailabilityService } from '../availability/availability.service';
 import { SettlementService } from './settlement.service';
@@ -26,6 +27,7 @@ export class WaitlistService {
     private readonly bookings: BookingRepository,
     private readonly availability: AvailabilityService,
     private readonly settlement: SettlementService,
+    private readonly policy: CandidateRequestPolicy,
     private readonly clock: Clock,
     private readonly config: AppConfig,
     private readonly mutex: Mutex,
@@ -35,6 +37,7 @@ export class WaitlistService {
   join(command: JoinWaitlistCommand): Promise<WaitlistEntry> {
     return this.mutex.runExclusive(async () => {
       await this.settlement.settle();
+      await this.policy.assertCanRequest(command.candidateName);
       const slots = await this.availability.findSlots({
         visaType: command.visaType,
         advisorId: command.advisorId,
@@ -82,6 +85,32 @@ export class WaitlistService {
       await this.bookings.save(held);
       await this.waitlist.save({ ...entry, status: WaitlistStatus.ACCEPTED });
       return held;
+    });
+  }
+
+  /**
+   * The candidate gives up their place, or declines an offer. A declined slot
+   * goes to the next candidate in the queue. Like cancelling a booking, this
+   * is what lets them make a new request.
+   */
+  leave(entryId: string): Promise<WaitlistEntry> {
+    return this.mutex.runExclusive(async () => {
+      await this.settlement.settle();
+      const entry = await this.waitlist.findById(entryId);
+      if (!entry) throw new DomainError('WAITLIST_ENTRY_NOT_FOUND', `Waitlist entry ${entryId} does not exist`);
+      if (entry.status !== WaitlistStatus.WAITING && entry.status !== WaitlistStatus.OFFERED) {
+        throw new DomainError('INVALID_STATE', `Waitlist entry is ${entry.status} and cannot be cancelled`);
+      }
+
+      const left: WaitlistEntry = { ...entry, status: WaitlistStatus.CANCELLED };
+      await this.waitlist.save(left);
+
+      const offer = entry.bookingId ? await this.bookings.findById(entry.bookingId) : undefined;
+      if (entry.status === WaitlistStatus.OFFERED && offer) {
+        await this.bookings.save({ ...offer, status: BookingStatus.CANCELLED, cancelledAt: this.clock.now() });
+        await this.settlement.settle([offer.advisorId]);
+      }
+      return left;
     });
   }
 

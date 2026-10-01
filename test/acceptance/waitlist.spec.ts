@@ -5,6 +5,7 @@ import { WaitlistStatus } from '../../src/waitlist/waitlist.model';
 import { MINUTE } from '../support/fake-clock';
 import { config, entryStatus, RAJAN, setup, sofiaFullForTypeB, SOFIA, t } from '../support/harness';
 
+const ACTIVE = { code: 'ACTIVE_REQUEST_EXISTS' };
 const wanda = { candidateName: 'Wanda Okafor', visaType: VisaType.B };
 
 /** Sofia is full for type B; Wanda is waiting; the blocker's hold has just run out and been offered on. */
@@ -371,4 +372,101 @@ describe('Waitlist (stretch)', () => {
     });
   });
 
+  describe('A candidate cannot join the waitlist twice, or while they have a booking', () => {
+    it('refuses joining twice, and names the place already held', async () => {
+      const ctx = await sofiaFullForTypeB();
+      const entry = await ctx.waitlist.join(wanda);
+      await expect(ctx.waitlist.join(wanda)).rejects.toMatchObject({
+        ...ACTIVE,
+        details: { existingRequest: { kind: 'WAITLIST_ENTRY', id: entry.id, status: WaitlistStatus.WAITING } },
+      });
+    });
+
+    it('refuses joining while holding a booking', async () => {
+      const ctx = await sofiaFullForTypeB();
+      await expect(ctx.waitlist.join({ candidateName: 'Blocker', visaType: VisaType.B })).rejects.toMatchObject(ACTIVE);
+    });
+
+    it('refuses a booking request from a candidate who is on the waitlist', async () => {
+      const ctx = await sofiaFullForTypeB();
+      await ctx.waitlist.join(wanda);
+      // A type A slot is free at 10:10, but Wanda already has a request in.
+      await expect(ctx.service.request({ candidateName: 'Wanda Okafor', visaType: VisaType.A })).rejects.toMatchObject(
+        ACTIVE,
+      );
+    });
+
+    it('refuses a new request while an offer is open', async () => {
+      const ctx = await offeredToWanda();
+      await expect(ctx.service.request({ candidateName: 'Wanda Okafor', visaType: VisaType.A })).rejects.toMatchObject({
+        ...ACTIVE,
+        details: { existingRequest: { kind: 'BOOKING', status: BookingStatus.OFFERED } },
+      });
+    });
+
+    it('allows a new request after a missed offer', async () => {
+      const ctx = await offeredToWanda();
+      ctx.clock.advance(10 * MINUTE); // not accepted
+      await expect(ctx.service.request(wanda)).resolves.toMatchObject({ status: BookingStatus.HELD });
+    });
+  });
+
+  describe('A candidate can leave the waitlist, or decline an offer. A declined slot is offered to the next person on the waitlist', () => {
+    it('gives up a waiting place, so a freed slot is not offered to them', async () => {
+      const ctx = await sofiaFullForTypeB();
+      const entry = await ctx.waitlist.join({ candidateName: 'Wanda', visaType: VisaType.B });
+
+      const left = await ctx.waitlist.leave(entry.id);
+      expect(left.status).toBe(WaitlistStatus.CANCELLED);
+
+      ctx.clock.advance(10 * MINUTE);
+      expect(await ctx.service.settle()).toEqual({ expired: 1, offered: 0 });
+      expect(await ctx.slotStarts('sofia', VisaType.B)).toEqual(['09:00']);
+    });
+
+    it('declines an offer and passes the slot to the next candidate straight away', async () => {
+      const ctx = await sofiaFullForTypeB();
+      const first = await ctx.waitlist.join({ candidateName: 'First', visaType: VisaType.B });
+      ctx.clock.advance(MINUTE);
+      const second = await ctx.waitlist.join({ candidateName: 'Second', visaType: VisaType.B });
+      ctx.clock.advance(9 * MINUTE);
+      await ctx.service.settle(); // offered to First
+      const { bookingId } = (await ctx.waitlist.get(first.id))!;
+
+      await ctx.waitlist.leave(first.id);
+
+      expect(await entryStatus(ctx, first.id)).toBe(WaitlistStatus.CANCELLED);
+      expect((await ctx.service.get(bookingId!))?.status).toBe(BookingStatus.CANCELLED);
+      expect(await entryStatus(ctx, second.id)).toBe(WaitlistStatus.OFFERED);
+    });
+
+    it('frees a declined slot for anyone when nobody else is waiting', async () => {
+      const ctx = await offeredToWanda();
+      await ctx.waitlist.leave(ctx.entry.id);
+      expect(await ctx.slotStarts('sofia', VisaType.B)).toEqual(['09:00']);
+    });
+
+    it('allows a new request after leaving the waitlist', async () => {
+      const ctx = await sofiaFullForTypeB();
+      const entry = await ctx.waitlist.join(wanda);
+      await ctx.waitlist.leave(entry.id);
+      await expect(ctx.service.request({ candidateName: 'Wanda Okafor', visaType: VisaType.A })).resolves.toMatchObject({
+        status: BookingStatus.HELD,
+      });
+    });
+
+    it('refuses leaving twice, after accepting, and an unknown entry', async () => {
+      const ctx = await sofiaFullForTypeB();
+      const gone = await ctx.waitlist.join({ candidateName: 'Gone', visaType: VisaType.B });
+      await ctx.waitlist.leave(gone.id);
+      await expect(ctx.waitlist.leave(gone.id)).rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+      const accepted = await ctx.waitlist.join({ candidateName: 'Accepted', visaType: VisaType.B });
+      ctx.clock.advance(10 * MINUTE);
+      await ctx.waitlist.acceptOffer(accepted.id);
+      await expect(ctx.waitlist.leave(accepted.id)).rejects.toMatchObject({ code: 'INVALID_STATE' });
+
+      await expect(ctx.waitlist.leave('missing')).rejects.toMatchObject({ code: 'WAITLIST_ENTRY_NOT_FOUND' });
+    });
+  });
 });

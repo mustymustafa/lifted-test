@@ -7,6 +7,7 @@ Requesting, confirming and cancelling a booking, and how holds expire.
 | [booking.model.ts](booking.model.ts) | Booking shape, statuses, and the "does this still block the slot?" rule |
 | [booking.dto.ts](booking.dto.ts) | GraphQL inputs and outputs, each input next to its zod schema |
 | [booking.service.ts](booking.service.ts) | request, confirm, cancel, list |
+| [candidate-request.policy.ts](candidate-request.policy.ts) | One active request per candidate |
 | [booking.resolver.ts](booking.resolver.ts) | GraphQL mutations and queries |
 | [booking.repository.ts](booking.repository.ts) | Storage interface and in-memory class |
 | [hold-sweeper.ts](hold-sweeper.ts) | Background timer |
@@ -58,11 +59,13 @@ requestBooking(candidateName, visaType, slotStart?, advisorId?)
 |                                                  |
 |  1. settle: release lapsed holds, offer freed    |
 |     slots to the waitlist (see ../waitlist)      |
-|  2. compute free slots for this duration         |
-|  3. pick slot: requested one, else the earliest  |
-|  4. none free? ---> SLOT_UNAVAILABLE             |
+|  2. candidate already has an active request?     |
+|       yes ---> ACTIVE_REQUEST_EXISTS             |
+|  3. compute free slots for this duration         |
+|  4. pick slot: requested one, else the earliest  |
+|  5. none free? ---> SLOT_UNAVAILABLE             |
 |                     or NO_SLOT_AVAILABLE         |
-|  5. save booking as HELD                         |
+|  6. save booking as HELD                         |
 +--------------------------------------------------+
         |
         v
@@ -70,9 +73,34 @@ requestBooking(candidateName, visaType, slotStart?, advisorId?)
 ```
 
 The repositories are async, so a second request could otherwise slip in
-between step 2 and step 5. The mutex queues requests so that cannot
+between step 2 and step 6. The mutex queues requests so that cannot
 happen within one process. With several instances, a database constraint
 has to take over this job (see README, "Taking it to production").
+
+## One active request per candidate
+
+An edge case found in manual testing: sending the same request repeatedly
+used to put a different slot on hold each time.
+
+```
+  requestBooking / joinWaitlist   (candidate "Amina Yusuf")
+        |
+        v
+  same candidate = same name, ignoring case and extra spaces
+        |
+        v
+  any active request for them?
+     a booking that is OFFERED, HELD or CONFIRMED
+     or a place on the waitlist (WAITING)
+        |
+   no   |   yes
+   |    +---------> ACTIVE_REQUEST_EXISTS
+   v                (the error names the request in the way)
+  carry on
+
+  They can request again once that request is
+  CANCELLED (cancelBooking, leaveWaitlist) or EXPIRED (nobody acted in time).
+```
 
 ## Confirm a booking
 
@@ -114,6 +142,9 @@ cancelBooking(bookingId)
 |  (see ../waitlist)                               |
 +--------------------------------------------------+
 ```
+
+Cancelling does two jobs: it is one of the waitlist's triggers, and it is how
+a candidate frees themselves to make a new request.
 
 ## Hold expiry
 

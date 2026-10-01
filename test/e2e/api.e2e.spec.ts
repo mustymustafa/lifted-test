@@ -185,7 +185,9 @@ describe('API over HTTP (e2e)', () => {
     }`;
     const ENTRY = `query ($id: ID!) { waitlistEntry(id: $id) { status offer { id status start expiresAt advisor { id } } } }`;
     const ACCEPT = `mutation ($input: AcceptOfferInput!) { acceptOffer(input: $input) { id status expiresAt } }`;
+    const LEAVE = `mutation ($input: LeaveWaitlistInput!) { leaveWaitlist(input: $input) { id status } }`;
     const BOOKING = `query ($id: ID!) { booking(id: $id) { id status candidateName } }`;
+    const WAITLIST = `query { waitlist { candidateName status } }`;
 
     /** Books and confirms every type B slot, so nothing lapses when the clock moves. */
     async function fillAllTypeB(): Promise<string[]> {
@@ -224,10 +226,48 @@ describe('API over HTTP (e2e)', () => {
       expect((await gql(BOOKING, { id: entry.offer.id })).data.booking).toMatchObject({ status: 'CONFIRMED', candidateName: 'Wanda' });
     });
 
+    it('lets a candidate decline an offer, which passes it to the next in the queue', async () => {
+      const [firstBooking] = await fillAllTypeB();
+      const first = (await gql(JOIN, { input: { candidateName: 'First', visaType: 'B' } })).data.joinWaitlist;
+      clock.advance(MINUTE);
+      await gql(JOIN, { input: { candidateName: 'Second', visaType: 'B' } });
+      await gql(CANCEL, { input: { bookingId: firstBooking } }); // offered to First
+
+      const left = await gql(LEAVE, { input: { waitlistEntryId: first.id } });
+      expect(left.data.leaveWaitlist).toEqual({ id: first.id, status: 'CANCELLED' });
+
+      expect((await gql(WAITLIST)).data.waitlist).toEqual([
+        { candidateName: 'First', status: 'CANCELLED' },
+        { candidateName: 'Second', status: 'OFFERED' },
+      ]);
+    });
+
     it('returns null for a booking or waitlist entry that does not exist', async () => {
       expect((await gql(BOOKING, { id: 'missing' })).data.booking).toBeNull();
       expect((await gql(ENTRY, { id: 'missing' })).data.waitlistEntry).toBeNull();
     });
   });
 
+  // Edge case found by manual testing in Postman: sending the same booking
+  // request over and over put a new slot on hold every time.
+  describe('one active request per candidate', () => {
+    const requestAs = (name: string) =>
+      gql(`mutation ($name: String!) { requestBooking(input: { candidateName: $name, visaType: A }) { id status } }`, { name });
+
+    it('refuses the same request sent again, and says which booking is in the way', async () => {
+      const first = (await requestAs('Amina Yusuf')).data.requestBooking;
+
+      const again = await requestAs('Amina Yusuf');
+
+      expect(codeOf(again)).toBe('ACTIVE_REQUEST_EXISTS');
+      expect(again.errors?.[0].message).toContain('Amina Yusuf already has an active request');
+      expect(again.errors?.[0].extensions.existingRequest).toEqual({ kind: 'BOOKING', id: first.id, status: 'HELD' });
+    });
+
+    it('holds one slot, not ten, when the same request is sent ten times', async () => {
+      for (let i = 0; i < 10; i++) await requestAs('Amina Yusuf');
+      expect(await slots({ visaType: 'A' })).toHaveLength(43);
+      expect((await gql('{ bookings { totalCount } }')).data.bookings.totalCount).toBe(1);
+    });
+  });
 });

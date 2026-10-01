@@ -7,7 +7,7 @@ oldest first, before anyone else can take them.
 |---|---|
 | [waitlist.model.ts](waitlist.model.ts) | Waitlist entry shape and statuses |
 | [waitlist.dto.ts](waitlist.dto.ts) | GraphQL inputs and outputs, each input next to its zod schema |
-| [waitlist.service.ts](waitlist.service.ts) | join, accept an offer, list |
+| [waitlist.service.ts](waitlist.service.ts) | join, accept an offer, leave, list |
 | [settlement.service.ts](settlement.service.ts) | Releases lapsed holds and offers freed slots |
 | [waitlist.resolver.ts](waitlist.resolver.ts) | GraphQL mutations and queries |
 | [waitlist.repository.ts](waitlist.repository.ts) | Storage interface and in-memory class |
@@ -18,6 +18,10 @@ oldest first, before anyone else can take them.
 joinWaitlist(candidateName, visaType, advisorId?)
         |
         v
+  candidate already has an active request? -- yes --> ACTIVE_REQUEST_EXISTS
+        |                                             (see ../bookings)
+        no
+        v
   slot available right now? ---- yes --> SLOTS_AVAILABLE
         |                                (use requestBooking)
         no
@@ -25,14 +29,16 @@ joinWaitlist(candidateName, visaType, advisorId?)
    +---------+   settle offers    +---------+   acceptOffer   +----------+
    | WAITING |------------------->| OFFERED |---------------->| ACCEPTED |
    +---------+   a freed slot     +---------+   (in 10 min)   +----------+
-                                       |                           |
-                                       | 10 min, no answer         v
-                                       v                    booking is HELD,
-                                  +---------+               advisor confirms
-                                  | EXPIRED |               (see ../bookings)
-                                  +---------+
-                                  out of the queue;
-                                  slot goes to the next entry
+        |                           |     |                        |
+        | leaveWaitlist             |     | 10 min, no answer      v
+        |          leaveWaitlist    |     v                 booking is HELD,
+        |          (decline)        |  +---------+          advisor confirms
+        v                           |  | EXPIRED |          (see ../bookings)
+   +-----------+ <------------------+  +---------+
+   | CANCELLED |
+   +-----------+
+
+   EXPIRED or declined: out of the queue, and the slot goes to the next entry.
 ```
 
 ## Settle: the waitlist gets first refusal

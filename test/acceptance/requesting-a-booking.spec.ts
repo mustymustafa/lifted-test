@@ -4,6 +4,7 @@ import { VisaType } from '../../src/config/rules';
 import { MINUTE } from '../support/fake-clock';
 import { setup, SOFIA, t } from '../support/harness';
 
+const ACTIVE = { code: 'ACTIVE_REQUEST_EXISTS' };
 const amina = { candidateName: 'Amina Yusuf', visaType: VisaType.A };
 
 /**
@@ -185,6 +186,104 @@ describe('Requesting a booking', () => {
       await expect(
         service.request({ candidateName: 'Amina', visaType: VisaType.A, advisorId: 'nobody' }),
       ).rejects.toMatchObject({ code: 'ADVISOR_NOT_FOUND' });
+    });
+  });
+
+  // Edge case found by manual testing: sending the same booking request
+  // repeatedly used to put a different slot on hold each time.
+  describe('A candidate can only have one active request at a time', () => {
+    it('refuses a second request while the first is on hold, and holds only one slot', async () => {
+      const { service, bookingRepo } = setup();
+      await service.request(amina);
+      await expect(service.request(amina)).rejects.toMatchObject(ACTIVE);
+      expect(await bookingRepo.findAll()).toHaveLength(1);
+    });
+
+    it('refuses even when asking for a different visa type, advisor or slot', async () => {
+      const { service } = setup();
+      await service.request(amina);
+      await expect(
+        service.request({ candidateName: 'Amina Yusuf', visaType: VisaType.B, advisorId: 'rajan' }),
+      ).rejects.toMatchObject(ACTIVE);
+    });
+
+    it.each(['amina yusuf', 'AMINA YUSUF', '  Amina   Yusuf  ', 'Amina\tYusuf'])(
+      'treats %j as the same candidate',
+      async (candidateName) => {
+        const { service } = setup();
+        await service.request(amina);
+        await expect(service.request({ candidateName, visaType: VisaType.A })).rejects.toMatchObject(ACTIVE);
+      },
+    );
+
+    it('does not affect a different candidate', async () => {
+      const { service } = setup();
+      await service.request(amina);
+      await expect(service.request({ candidateName: 'Amina Yusufzai', visaType: VisaType.A })).resolves.toMatchObject({
+        status: BookingStatus.HELD,
+      });
+    });
+
+    it('gives one booking when the same candidate sends 25 requests at once', async () => {
+      const { service, bookingRepo } = setup();
+      const results = await Promise.allSettled(Array.from({ length: 25 }, () => service.request(amina)));
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(rejected.every((r) => r.reason.code === 'ACTIVE_REQUEST_EXISTS')).toBe(true);
+      expect(await bookingRepo.findAll()).toHaveLength(1);
+    });
+  });
+
+  describe('A second request from the same candidate is refused, and they are told which request is in the way', () => {
+    it('names the booking that is in the way, with its status', async () => {
+      const { service } = setup();
+      const first = await service.request(amina);
+
+      await expect(service.request(amina)).rejects.toMatchObject({
+        ...ACTIVE,
+        details: { existingRequest: { kind: 'BOOKING', id: first.id, status: BookingStatus.HELD } },
+      });
+
+      await service.confirm(first.id, first.advisorId);
+      await expect(service.request(amina)).rejects.toMatchObject({
+        details: { existingRequest: { id: first.id, status: BookingStatus.CONFIRMED } },
+      });
+    });
+  });
+
+  describe('A candidate can request again once their earlier request is cancelled, or is rejected because the advisor did not confirm in time', () => {
+    it('allows a new request after the first is cancelled', async () => {
+      const { service } = setup();
+      const first = await service.request(amina);
+      await service.cancel(first.id);
+      await expect(service.request(amina)).resolves.toMatchObject({ status: BookingStatus.HELD });
+    });
+
+    it('allows a new request after a confirmed booking is cancelled', async () => {
+      const { service } = setup();
+      const first = await service.request(amina);
+      await service.confirm(first.id, first.advisorId);
+      await service.cancel(first.id);
+      await expect(service.request(amina)).resolves.toMatchObject({ status: BookingStatus.HELD });
+    });
+
+    it('still refuses one millisecond before the hold expires', async () => {
+      const { service, clock } = setup();
+      await service.request(amina);
+      clock.advance(10 * MINUTE - 1);
+      await expect(service.request(amina)).rejects.toMatchObject(ACTIVE);
+    });
+
+    it('allows a new request once the advisor has not confirmed in time and the hold has expired', async () => {
+      const { service, clock } = setup();
+      const first = await service.request(amina);
+      clock.advance(10 * MINUTE);
+
+      const second = await service.request(amina);
+
+      expect(second.status).toBe(BookingStatus.HELD);
+      expect((await service.get(first.id))?.status).toBe(BookingStatus.EXPIRED);
     });
   });
 
