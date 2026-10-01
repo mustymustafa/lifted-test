@@ -202,9 +202,63 @@ which is why it belongs with the production queue work below.
 
 **Hold expiry and notifications**
 
-- Replace the in-process timer with a delayed job per hold (SQS delay, BullMQ)
-  or a scheduled job. With several instances an in-process timer runs once
-  per instance.
+Today the sweeper is a `setInterval` inside the app process
+([hold-sweeper.ts](src/scheduling/services/hold-sweeper.ts)). That does not
+survive production: it runs once per instance, it is lost on a deploy or
+crash, it scans every booking, and it is late by up to one interval.
+
+I would schedule one delayed job per hold, and keep a slow sweep as a safety
+net:
+
+```
+  requestBooking
+        |
+        v
++--------------------------------------------+
+|  one DB transaction                        |
+|    insert booking (HELD, expires_at)       |
+|    insert outbox row "expire booking X"    |
++--------------------------------------------+
+        |
+        v
+  outbox relay publishes to the queue
+  with a 10 minute delay
+        |
+        v
++------------------+        +-----------------------------------+
+|  Queue           |        |  Worker (any instance)            |
+|  (SQS delay or   |------->|                                   |
+|   BullMQ/Redis)  |        |  UPDATE bookings                  |
++------------------+        |    SET status = 'EXPIRED'         |
+                            |    WHERE id = X                   |
+                            |      AND status = 'HELD'          |
+                            |      AND expires_at <= now()      |
+                            |                                   |
+                            |  0 rows changed -> do nothing     |
+                            |  1 row changed  -> process        |
+                            |                    waitlist       |
+                            +-----------------------------------+
+
+  Safety net: a scheduled job every minute runs the same UPDATE
+  for any HELD row past expires_at, in case a message was lost.
+```
+
+- The conditional `UPDATE` makes the job safe to run twice. Queues deliver at
+  least once; if the booking was confirmed meanwhile, or another worker got
+  there first, zero rows change and nothing happens.
+- The outbox row is written in the same transaction as the hold, so there is
+  never a hold with no expiry scheduled, or a job for a hold that failed to
+  save.
+- Any instance can pick the job up, so a deploy or crash does not lose it.
+- Reads still check `expires_at`, as they do today. Availability stays correct
+  even if the queue is slow; the job only drives the side effects (stored
+  status, waitlist offer, notification).
+
+A simpler first step is to skip the queue and run only the scheduled sweep
+(`pg_cron`, or a cron job guarded by a Postgres advisory lock so one instance
+runs it). Less to operate, but side effects are up to a minute late. I would
+start there and add the queue when the lateness matters.
+
 - "The assigned IA receives the request" is not implemented. I would write an
   outbox row in the same transaction as the hold and have a worker deliver
   it (email, push), so a notification is never lost or sent for a hold that
