@@ -7,7 +7,12 @@ candidates in order.
 
 Built with NestJS, GraphQL (Apollo) and zod. Data lives in memory.
 
-For diagrams of how it fits together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For diagrams of how it fits together, start at
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Each feature folder has its own
+README with the flows for that feature:
+[advisors](src/advisors/README.md), [availability](src/availability/README.md),
+[bookings](src/bookings/README.md), [waitlist](src/waitlist/README.md),
+[common](src/common/README.md).
 
 ## How to run
 
@@ -125,8 +130,9 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
 
 ## Project layout
 
-One folder per feature. Each holds its model, storage, logic, API and DTOs,
-so following one feature means opening one folder.
+One folder per feature. Each holds its model, storage, logic, API, DTOs and a
+README with its flow diagrams, so following one feature means opening one
+folder.
 
 ```
 src/
@@ -401,7 +407,8 @@ start there and add the queue when the lateness matters.
 I used Claude Code (Claude Opus) throughout.
 
 - **Planning.** I start most work by having the AI draft an ASCII flow of the
-  architecture, which became [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). I
+  architecture, which became [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+  the README in each feature folder. I
   used it to argue through the design before any code existed.
 - **Decisions that were mine.** GraphQL, zod DTOs, singletons through DI. The
   first plan it proposed used Postgres in Docker; I pushed back because the
