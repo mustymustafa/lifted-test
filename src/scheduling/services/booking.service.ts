@@ -5,7 +5,7 @@ import { AppConfig } from '../../common/config';
 import { DomainError } from '../../common/errors';
 import { Mutex } from '../../common/mutex';
 import { Booking, BookingStatus } from '../domain/booking';
-import { VisaType } from '../domain/visa-type';
+import { DEFAULT_PAGE_SIZE, VisaType } from '../domain/rules';
 import { BookingRepository } from '../repositories/booking.repository';
 import { AvailabilityService } from './availability.service';
 import { SettleResult, SettlementService } from './settlement.service';
@@ -129,7 +129,7 @@ export class BookingService {
   }
 
   /** Bookings ordered by start time, with filters and cursor pagination. */
-  async list(filter: BookingFilter = {}, first = 50, after?: string): Promise<BookingPage> {
+  async list(filter: BookingFilter = {}, first = DEFAULT_PAGE_SIZE, after?: string): Promise<BookingPage> {
     await this.settle();
     const matches = (await this.bookings.findAll())
       .filter(

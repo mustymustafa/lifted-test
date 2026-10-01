@@ -1,5 +1,6 @@
 import { Args, ID, Int, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import { DEFAULT_HOLD_MINUTES, DEFAULT_PAGE_SIZE } from '../domain/rules';
 import { AdvisorRepository } from '../repositories/advisor.repository';
 import { BookingService } from '../services/booking.service';
 import {
@@ -32,7 +33,7 @@ export class BookingResolver {
   ) {}
 
   @Mutation(() => BookingType, {
-    description: 'Request a booking. The slot is held for 10 minutes while the advisor confirms.',
+    description: `Request a booking. The slot is held for ${DEFAULT_HOLD_MINUTES} minutes while the advisor confirms.`,
   })
   requestBooking(
     @Args('input', { type: () => RequestBookingInput }, new ZodValidationPipe(RequestBookingSchema))
@@ -73,7 +74,7 @@ export class BookingResolver {
     @Args('filter', { type: () => BookingsFilterInput, defaultValue: {} },
       new ZodValidationPipe(BookingsFilterSchema))
     filter: BookingsFilterDto,
-    @Args('first', { type: () => Int, defaultValue: 50 }, new ZodValidationPipe(PageSizeSchema))
+    @Args('first', { type: () => Int, defaultValue: DEFAULT_PAGE_SIZE }, new ZodValidationPipe(PageSizeSchema))
     first: number,
     @Args('after', { type: () => ID, nullable: true }) after?: string,
   ): Promise<BookingPageType> {

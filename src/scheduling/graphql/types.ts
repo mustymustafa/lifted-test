@@ -1,14 +1,19 @@
 import { Field, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { BookingStatus } from '../domain/booking';
-import { VisaType } from '../domain/visa-type';
+import { VISA_RULES, VisaType } from '../domain/rules';
 import { WaitlistStatus } from '../domain/waitlist';
 
 registerEnumType(VisaType, {
   name: 'VisaType',
-  valuesMap: {
-    A: { description: 'Skilled Worker: 30 minute appointment' },
-    B: { description: 'Family / Dependent: 60 minute appointment' },
-  },
+  valuesMap: Object.fromEntries(
+    Object.values(VisaType).map((type) => {
+      const { label, durationMinutes, breakMinutes } = VISA_RULES[type];
+      return [
+        type,
+        { description: `${label}: ${durationMinutes} minute appointment, ${breakMinutes} minute advisor break after` },
+      ];
+    }),
+  ),
 });
 registerEnumType(BookingStatus, { name: 'BookingStatus' });
 registerEnumType(WaitlistStatus, { name: 'WaitlistStatus' });

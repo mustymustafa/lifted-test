@@ -1,4 +1,4 @@
-import { VISA_RULES, VisaType } from './visa-type';
+import { VISA_RULES, VisaType } from './rules';
 import { Interval } from './slot-calculator';
 
 export enum BookingStatus {
@@ -29,7 +29,7 @@ export interface Booking {
 const isTimeLimited = (status: BookingStatus): boolean =>
   status === BookingStatus.HELD || status === BookingStatus.OFFERED;
 
-/** True for a hold or a waitlist offer whose 10 minutes have run out. */
+/** True for a hold or a waitlist offer whose time has run out. */
 export function isHoldExpired(booking: Booking, now: Date): boolean {
   return isTimeLimited(booking.status) && booking.expiresAt.getTime() <= now.getTime();
 }

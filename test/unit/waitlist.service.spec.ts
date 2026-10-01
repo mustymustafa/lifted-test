@@ -1,5 +1,5 @@
 import { BookingStatus } from '../../src/scheduling/domain/booking';
-import { VisaType } from '../../src/scheduling/domain/visa-type';
+import { VisaType } from '../../src/scheduling/domain/rules';
 import { WaitlistStatus } from '../../src/scheduling/domain/waitlist';
 import { MINUTE } from '../support/fake-clock';
 import { RAJAN, setup, SOFIA, t } from '../support/harness';

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BookingStatus } from '../domain/booking';
-import { VisaType } from '../domain/visa-type';
+import { CANDIDATE_NAME_MAX_LENGTH, MAX_PAGE_SIZE, VisaType } from '../domain/rules';
 import { WaitlistStatus } from '../domain/waitlist';
 
 /** GraphQL sends `null` for an explicitly empty field; the services only deal in `undefined`. */
@@ -8,7 +8,7 @@ const optional = <T extends z.ZodType>(schema: T) =>
   schema.nullish().transform((value) => value ?? undefined);
 
 const id = z.string().trim().min(1);
-const candidateName = z.string().trim().min(1, 'candidateName is required').max(120);
+const candidateName = z.string().trim().min(1, 'candidateName is required').max(CANDIDATE_NAME_MAX_LENGTH);
 
 const dateRange = { from: optional(z.date()), to: optional(z.date()) };
 const fromBeforeTo = (v: { from?: Date; to?: Date }) => !v.from || !v.to || v.from < v.to;
@@ -40,7 +40,7 @@ export const BookingsFilterSchema = z
   .refine(fromBeforeTo, fromBeforeToIssue);
 export type BookingsFilterDto = z.infer<typeof BookingsFilterSchema>;
 
-export const PageSizeSchema = z.number().int().min(1).max(100);
+export const PageSizeSchema = z.number().int().min(1).max(MAX_PAGE_SIZE);
 
 export const IdSchema = id;
 

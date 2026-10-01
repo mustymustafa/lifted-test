@@ -4,7 +4,7 @@ import { DomainError } from '../../common/errors';
 import { Advisor } from '../domain/advisor';
 import { blockedRange, blocksAvailability } from '../domain/booking';
 import { computeSlots } from '../domain/slot-calculator';
-import { VISA_RULES, VisaType } from '../domain/visa-type';
+import { VISA_RULES, VisaType } from '../domain/rules';
 import { AdvisorRepository } from '../repositories/advisor.repository';
 import { BookingRepository } from '../repositories/booking.repository';
 

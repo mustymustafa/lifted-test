@@ -1,8 +1,8 @@
-import { VisaType } from './visa-type';
+import { VisaType } from './rules';
 
 export enum WaitlistStatus {
   WAITING = 'WAITING',
-  /** A freed slot has been offered; the candidate has 10 minutes to accept. */
+  /** A freed slot has been offered; the candidate has a limited time to accept. */
   OFFERED = 'OFFERED',
   ACCEPTED = 'ACCEPTED',
   /** The candidate did not accept in time and has left the queue. */

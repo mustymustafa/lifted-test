@@ -1,5 +1,7 @@
 import { Clock } from '../../src/common/clock';
 
+export { MINUTE } from '../../src/scheduling/domain/rules';
+
 /** A clock that only moves when the test tells it to. */
 export class FakeClock extends Clock {
   private current: number;
@@ -17,5 +19,3 @@ export class FakeClock extends Clock {
     this.current += ms;
   }
 }
-
-export const MINUTE = 60_000;

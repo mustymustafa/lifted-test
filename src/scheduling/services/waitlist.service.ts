@@ -5,7 +5,7 @@ import { AppConfig } from '../../common/config';
 import { DomainError } from '../../common/errors';
 import { Mutex } from '../../common/mutex';
 import { Booking, BookingStatus } from '../domain/booking';
-import { VisaType } from '../domain/visa-type';
+import { VisaType } from '../domain/rules';
 import { WaitlistEntry, WaitlistStatus } from '../domain/waitlist';
 import { BookingRepository } from '../repositories/booking.repository';
 import { WaitlistRepository } from '../repositories/waitlist.repository';
@@ -58,7 +58,7 @@ export class WaitlistService {
 
   /**
    * The candidate accepts an offered slot. It becomes a normal held booking,
-   * and the advisor gets a fresh 10 minutes to confirm it.
+   * and the advisor gets a fresh hold period to confirm it.
    */
   acceptOffer(entryId: string): Promise<Booking> {
     return this.mutex.runExclusive(async () => {

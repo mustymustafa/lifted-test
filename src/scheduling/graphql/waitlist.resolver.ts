@@ -1,5 +1,6 @@
 import { Args, ID, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import { DEFAULT_HOLD_MINUTES } from '../domain/rules';
 import { WaitlistStatus } from '../domain/waitlist';
 import { BookingService } from '../services/booking.service';
 import { WaitlistService } from '../services/waitlist.service';
@@ -31,7 +32,7 @@ export class WaitlistResolver {
   }
 
   @Mutation(() => BookingType, {
-    description: 'The candidate accepts an offered slot within 10 minutes. The advisor then confirms as usual.',
+    description: `The candidate accepts an offered slot within ${DEFAULT_HOLD_MINUTES} minutes. The advisor then confirms as usual.`,
   })
   acceptOffer(
     @Args('input', { type: () => AcceptOfferInput }, new ZodValidationPipe(AcceptOfferSchema))

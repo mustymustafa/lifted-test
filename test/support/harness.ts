@@ -1,7 +1,7 @@
 import { AppConfig } from '../../src/common/config';
 import { Mutex } from '../../src/common/mutex';
 import { Advisor } from '../../src/scheduling/domain/advisor';
-import { VisaType } from '../../src/scheduling/domain/visa-type';
+import { VisaType } from '../../src/scheduling/domain/rules';
 import { InMemoryAdvisorRepository } from '../../src/scheduling/repositories/advisor.repository';
 import { InMemoryBookingRepository } from '../../src/scheduling/repositories/booking.repository';
 import { InMemoryWaitlistRepository } from '../../src/scheduling/repositories/waitlist.repository';

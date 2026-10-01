@@ -143,13 +143,18 @@ Errors come back with a stable `extensions.code`: `BAD_USER_INPUT`,
   something that runs locally with a simple setup step, so there is no
   database. The interfaces are async on purpose so a database can replace
   the in-memory classes without touching the services.
+- **One file for the business rules**
+  ([rules.ts](src/scheduling/domain/rules.ts)). Visa types, appointment
+  lengths, breaks, the hold time and input limits are defined once there.
+  The slot logic, config defaults and GraphQL schema descriptions all read
+  from it, so changing a duration or adding a visa type is a one-file change.
 - **Slot calculation as a pure function**
   ([slot-calculator.ts](src/scheduling/domain/slot-calculator.ts)). No clock,
   no storage, just intervals in and slots out. It holds the trickiest logic,
   so it is the most heavily tested file.
 - **Injected clock.** Nothing calls `new Date()` directly. Tests move a fake
   clock forward to check expiry at 9:59.999 and 10:00.000 without waiting.
-- **Jest + supertest.** 131 tests, about 98% line coverage.
+- **Jest + supertest.** 133 tests, about 98% line coverage.
 
 ### Decisions worth knowing about
 
