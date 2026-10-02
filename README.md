@@ -455,12 +455,12 @@ with different names. How the availability feed would be ingested is in the
 
 ## How I used AI
 
-I used Claude Code throughout, in the same four steps I use for all my work.
+I used Claude Code throughout, in the same four steps I use for all my work, using 3 skills i created (`/refine-agent` `/test-agent`, `/build-from-ascii-plan` )
 The split: I own the plan, the decisions and the review; the AI owns writing
 the code, generating the test scenarios and drafting the documentation.
 
 ```
- 1. /refine                 2. /test                  3. /build-from-ascii-plan     4. manual review
+ 1. /refine-agent                 2. /test-agent                  3. /build-from-ascii-plan     4. manual review
  me:  architecture,         AI:  acceptance criteria  AI:  code from the plan,      me:  read the code,
       decisions, edge            from the plan, test       unit tests written to         run the scenarios
       cases, blast radius        scenarios from the        the scenarios, Postman        by hand, give
