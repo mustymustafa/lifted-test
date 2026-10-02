@@ -113,7 +113,7 @@ describe('Requesting a booking', () => {
       expect(waiting.items.map((b) => b.id)).toEqual([mine.id]);
     });
 
-    it.todo('notifies the advisor of the request (not built: see "Taking it to production" in the README)');
+    it.todo('pushes the request to the advisor by email or notification: a separate system fed by an outbox, see the README');
   });
 
   describe('If the advisor does not confirm within 10 minutes, the slot is released automatically', () => {

@@ -39,6 +39,7 @@ external feed.
 
 Everything past this point trusts the shape, the dates and the ordering.
 
-In production this becomes a scheduled pull or a webhook, parsed by the same
-schema and upserted so replays are safe. See "Ingesting availability" in the
-[README](../../README.md).
+In production this becomes a scheduled pull or a webhook: parsed by the same
+schema, upserted by `(advisor_id, start, end)` so a replayed feed is safe, a bad
+payload rejected whole rather than half-applied, and a window withdrawn with a
+booking already in it kept and flagged for a person to resolve.
