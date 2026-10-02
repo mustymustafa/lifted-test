@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Clock } from '../common/clock';
 import { DomainError } from '../common/errors';
 import { Advisor } from '../advisors/advisor.model';
-import { blockedRange, blocksAvailability } from '../bookings/booking.model';
+import { blockedRange } from '../bookings/booking.model';
 import { computeSlots } from './slot-calculator';
 import { VISA_RULES, VisaType } from '../config/rules';
 import { AdvisorRepository } from '../advisors/advisor.repository';
@@ -37,13 +37,12 @@ export class AvailabilityService {
   async findSlots(filter: SlotFilter = {}): Promise<Slot[]> {
     const advisors = await this.resolveAdvisors(filter.advisorId);
     const now = this.clock.now();
-    const active = (await this.bookings.findAll()).filter((b) => blocksAvailability(b, now));
     const visaTypes = filter.visaType ? [filter.visaType] : Object.values(VisaType);
 
     const slots: Slot[] = [];
     for (const advisor of advisors) {
       const windows = advisor.windows.map((w) => ({ start: w.start.getTime(), end: w.end.getTime() }));
-      const blocked = active.filter((b) => b.advisorId === advisor.id).map(blockedRange);
+      const blocked = (await this.bookings.findBlocking(advisor.id, now)).map(blockedRange);
       for (const visaType of visaTypes) {
         const { durationMs, breakMs } = VISA_RULES[visaType];
         for (const s of computeSlots({ windows, blocked, durationMs, breakMs })) {

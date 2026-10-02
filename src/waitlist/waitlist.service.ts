@@ -117,9 +117,7 @@ export class WaitlistService {
   /** Entries in the order they joined. */
   async list(status?: WaitlistStatus): Promise<WaitlistEntry[]> {
     await this.mutex.runExclusive(() => this.settlement.settle());
-    return (await this.waitlist.findAll())
-      .filter((e) => !status || e.status === status)
-      .sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime());
+    return this.waitlist.find(status);
   }
 
   async get(entryId: string): Promise<WaitlistEntry | undefined> {

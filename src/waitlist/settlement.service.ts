@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Clock } from '../common/clock';
 import { AppConfig } from '../config/config';
-import { BookingStatus, isHoldExpired } from '../bookings/booking.model';
+import { BookingStatus } from '../bookings/booking.model';
 import { WaitlistStatus } from './waitlist.model';
 import { BookingRepository } from '../bookings/booking.repository';
 import { WaitlistRepository } from './waitlist.repository';
@@ -39,8 +39,7 @@ export class SettlementService {
     const freed = new Set(freedAdvisorIds);
     let expired = 0;
 
-    for (const booking of await this.bookings.findAll()) {
-      if (!isHoldExpired(booking, now)) continue;
+    for (const booking of await this.bookings.findExpired(now)) {
       await this.bookings.save({ ...booking, status: BookingStatus.EXPIRED });
       if (booking.status === BookingStatus.OFFERED) await this.closeMissedOffer(booking.id);
       freed.add(booking.advisorId);
@@ -53,7 +52,7 @@ export class SettlementService {
 
   /** A candidate who lets an offer lapse has had their turn and leaves the queue. */
   private async closeMissedOffer(bookingId: string): Promise<void> {
-    const entry = (await this.waitlist.findAll()).find((e) => e.bookingId === bookingId);
+    const entry = await this.waitlist.findByBookingId(bookingId);
     if (entry) await this.waitlist.save({ ...entry, status: WaitlistStatus.EXPIRED });
   }
 
@@ -62,9 +61,7 @@ export class SettlementService {
    * candidate whose visa type does not fit is skipped, not blocking the queue.
    */
   private async offerFreedSlots(freed: Set<string>, now: Date): Promise<number> {
-    const waiting = (await this.waitlist.findAll())
-      .filter((e) => e.status === WaitlistStatus.WAITING && (!e.advisorId || freed.has(e.advisorId)))
-      .sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime());
+    const waiting = await this.waitlist.findWaitingFor(freed);
 
     let offered = 0;
     for (const entry of waiting) {

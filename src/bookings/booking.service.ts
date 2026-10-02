@@ -6,7 +6,7 @@ import { DomainError } from '../common/errors';
 import { Mutex } from '../common/mutex';
 import { Booking, BookingStatus } from './booking.model';
 import { DEFAULT_PAGE_SIZE, VisaType } from '../config/rules';
-import { BookingRepository } from './booking.repository';
+import { BookingQuery, BookingRepository } from './booking.repository';
 import { CandidateRequestPolicy } from './candidate-request.policy';
 import { AvailabilityService } from '../availability/availability.service';
 import { SettleResult, SettlementService } from '../waitlist/settlement.service';
@@ -20,15 +20,8 @@ export interface RequestBookingCommand {
   advisorId?: string;
 }
 
-export interface BookingFilter {
-  status?: BookingStatus;
-  advisorId?: string;
-  visaType?: VisaType;
-  /** Only bookings that start at or after this time. */
-  from?: Date;
-  /** Only bookings that end at or before this time. */
-  to?: Date;
-}
+/** The filters a caller can list bookings by. */
+export type BookingFilter = BookingQuery;
 
 export interface BookingPage {
   items: Booking[];
@@ -139,21 +132,7 @@ export class BookingService {
   /** Bookings ordered by start time, with filters and cursor pagination. */
   async list(filter: BookingFilter = {}, first = DEFAULT_PAGE_SIZE, after?: string): Promise<BookingPage> {
     await this.settle();
-    const matches = (await this.bookings.findAll())
-      .filter(
-        (b) =>
-          (!filter.status || b.status === filter.status) &&
-          (!filter.advisorId || b.advisorId === filter.advisorId) &&
-          (!filter.visaType || b.visaType === filter.visaType) &&
-          (!filter.from || b.start >= filter.from) &&
-          (!filter.to || b.end <= filter.to),
-      )
-      .sort(
-        (a, b) =>
-          a.start.getTime() - b.start.getTime() ||
-          a.createdAt.getTime() - b.createdAt.getTime() ||
-          a.id.localeCompare(b.id),
-      );
+    const matches = await this.bookings.find(filter);
 
     let offset = 0;
     if (after) {
