@@ -449,8 +449,7 @@ What changes, in order:
    real Postgres before anything deploys, because the constraint is where
    correctness lives and tests against memory never touch it.
 
-On AWS that is containers on ECS and Postgres on RDS; elsewhere the same parts
-with different names. How the availability feed would be ingested is in the
+ How the availability feed would be ingested is in the
 [advisors README](src/advisors/README.md).
 
 ## How I used AI
