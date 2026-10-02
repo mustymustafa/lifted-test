@@ -85,6 +85,32 @@ describe('API over HTTP (e2e)', () => {
     });
   });
 
+  describe('errors', () => {
+    it('never includes a stack trace, whatever went wrong', async () => {
+      const responses = await Promise.all([
+        gql(CONFIRM, { input: { bookingId: 'missing', advisorId: 'ia-001' } }), // a business rule
+        gql(REQUEST, { input: { candidateName: '   ', visaType: 'A' } }), // our validation
+        gql(REQUEST, { input: { candidateName: 'Amina', visaType: 'C' } }), // GraphQL's validation
+        gql('{ nonsense }'), // a bad query
+      ]);
+      for (const res of responses) {
+        expect(res.errors).toHaveLength(1);
+        expect(res.errors![0].extensions).not.toHaveProperty('stacktrace');
+      }
+    });
+
+    it('says what was wrong in the message, not only in a list of issues', async () => {
+      const blank = await gql(REQUEST, { input: { candidateName: '   ', visaType: 'A' } });
+      expect(blank.errors?.[0].message).toBe('Invalid input: candidateName is required');
+
+      const emptyId = await gql(`query ($id: ID!) { booking(id: $id) { id } }`, { id: '  ' });
+      expect(emptyId.errors?.[0].message).toBe('Invalid input: an id is required');
+
+      const page = await gql(BOOKINGS, { first: 101 });
+      expect(page.errors?.[0].message).toBe('Invalid input: first must be 100 or fewer');
+    });
+  });
+
   describe('requestBooking', () => {
     it('holds the earliest slot for ten minutes, with the name trimmed', async () => {
       const res = await gql(REQUEST, { input: { candidateName: '  Amina Yusuf ', visaType: 'B' } });

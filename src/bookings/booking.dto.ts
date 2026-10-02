@@ -106,4 +106,8 @@ export const BookingsFilterSchema = z
   .refine(fromBeforeTo, fromBeforeToIssue);
 export type BookingsFilterDto = z.infer<typeof BookingsFilterSchema>;
 
-export const PageSizeSchema = z.number().int().min(1).max(MAX_PAGE_SIZE);
+export const PageSizeSchema = z
+  .number()
+  .int()
+  .min(1, 'first must be at least 1')
+  .max(MAX_PAGE_SIZE, `first must be ${MAX_PAGE_SIZE} or fewer`);

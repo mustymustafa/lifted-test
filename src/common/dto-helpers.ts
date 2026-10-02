@@ -21,13 +21,13 @@ registerEnumType(VisaType, {
 export const optional = <T extends z.ZodType>(schema: T) =>
   schema.nullish().transform((value) => value ?? undefined);
 
-export const IdSchema = z.string().trim().min(1);
+export const IdSchema = z.string().trim().min(1, 'an id is required');
 
 export const CandidateNameSchema = z
   .string()
   .trim()
   .min(1, 'candidateName is required')
-  .max(CANDIDATE_NAME_MAX_LENGTH);
+  .max(CANDIDATE_NAME_MAX_LENGTH, `candidateName must be ${CANDIDATE_NAME_MAX_LENGTH} characters or fewer`);
 
 export const VisaTypeSchema = z.enum(VisaType);
 

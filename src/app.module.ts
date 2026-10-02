@@ -31,6 +31,8 @@ import { WaitlistService } from './waitlist/waitlist.service';
       autoSchemaFile: true,
       sortSchema: true,
       graphiql: true,
+      // Clients get a message and a stable code, never our file paths.
+      includeStacktraceInErrorResponses: false,
     }),
     CommonModule,
   ],
